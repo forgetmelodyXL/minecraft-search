@@ -81,7 +81,7 @@ export function apply(ctx: Context, config: Config) {
       // 构建响应消息
       let message = `🟢 ${server.name}\n`
       message += `🌐 IP: ${hostWithPort}\n`
-      message += `📝 MOTD: ${removeFormatting(response.pureMotd || response.motd?.text || '无')}\n`
+      message += `📝 MOTD: \n${removeFormatting(response.pureMotd || response.motd?.text || '无')}\n`
       message += `🎮 版本: ${response.version} (协议 ${response.protocol})\n`
       message += `👥 玩家: ${response.players.online}/${response.players.max}\n`
       message += `⏱️ 延迟: ${response.delay}ms\n`
