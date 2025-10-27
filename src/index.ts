@@ -133,7 +133,7 @@ export function apply(ctx: Context, config: Config) {
         return `🔴 ${server.id} ${server.name}\n🌐 ${hostWithPort}\n状态: 离线`
       }
 
-      let message = `🟢 ${server.id} ${server.name}\n`
+      let message = `🟢 [${server.id}] ${server.name}\n`
       message += `🌐 IP: ${hostWithPort}\n`
       message += `📝 MOTD: \n${removeFormatting(response.pureMotd || response.motd?.text || '无')}\n`
       message += `🎮 版本: ${response.version} (协议 ${response.protocol})\n`
