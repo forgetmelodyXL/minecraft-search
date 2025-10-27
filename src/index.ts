@@ -3,6 +3,7 @@ import { Context, Schema } from 'koishi'
 export const name = 'minecraft-search'
 
 export interface ServerConfig {
+  id: number // 改为数字类型
   name: string
   host: string
   port: number
@@ -11,11 +12,6 @@ export interface ServerConfig {
 export interface MinekuaiConfig {
   apiKey: string
   baseUrl?: string
-  instances: Array<{
-    id: string
-    name: string
-    identifier: string
-  }>
 }
 
 export interface Config {
@@ -25,26 +21,19 @@ export interface Config {
 
 export const Config: Schema<Config> = Schema.object({
   servers: Schema.array(Schema.object({
-    name: Schema.string().description('服务器名称').required(),
-    host: Schema.string().description('服务器地址').required(),
+    id: Schema.number().description('服务器ID'), // 改为数字类型
+    name: Schema.string().description('服务器名称'),
+    host: Schema.string().description('服务器地址'),
     port: Schema.number().description('服务器端口').default(25565),
   }))
     .description('Minecraft服务器列表')
     .role('table')
     .collapse()
     .required(),
-  
+
   minekuai: Schema.object({
-    apiKey: Schema.string().description('麦块联机API密钥').required(),
+    apiKey: Schema.string().description('麦块联机API密钥'),
     baseUrl: Schema.string().description('API基础URL').default('https://minekuai.com/api/client'),
-    instances: Schema.array(Schema.object({
-      id: Schema.string().description('实例ID').required(),
-      name: Schema.string().description('实例名称').required(),
-      identifier: Schema.string().description('实例标识符').required(),
-    }))
-      .description('麦块联机实例列表')
-      .role('table')
-      .collapse()
   })
     .description('麦块联机配置')
 })
@@ -64,7 +53,6 @@ async function minekuaiRequest(ctx: Context, config: MinekuaiConfig, endpoint: s
   }
 
   try {
-    // 使用正确的HTTP方法调用
     if (method === 'GET') {
       return await ctx.http.get(url, { headers })
     } else {
@@ -72,12 +60,10 @@ async function minekuaiRequest(ctx: Context, config: MinekuaiConfig, endpoint: s
     }
   } catch (error) {
     ctx.logger('minecraft-search').warn(`麦块联机API请求失败: ${endpoint}`, error)
-    
-    // 提取API返回的错误详情
+
     let errorMessage = error.message
     try {
       if (error.response && error.response.data) {
-        // 麦块API的错误格式
         if (error.response.data.errors) {
           const apiError = error.response.data.errors[0]
           errorMessage = `[${apiError.status}] ${apiError.code}: ${apiError.detail}`
@@ -85,8 +71,8 @@ async function minekuaiRequest(ctx: Context, config: MinekuaiConfig, endpoint: s
           errorMessage = error.response.data.message
         }
       }
-    } catch (e) {}
-    
+    } catch (e) { }
+
     throw new Error(errorMessage)
   }
 }
@@ -96,57 +82,67 @@ export function apply(ctx: Context, config: Config) {
   ctx.command('mc/查服 [serverName:string]')
     .action(async ({ session }, serverName) => {
       const { servers } = config
-      
+
       if (!servers || servers.length === 0) {
         return '未配置任何Minecraft服务器'
       }
-      
+
       if (serverName) {
-        const targetServer = servers.find(server => 
+        // 尝试按ID查找（如果输入是数字）
+        if (!isNaN(Number(serverName))) {
+          const id = parseInt(serverName)
+          const targetServer = servers.find(server => server.id === id)
+          if (targetServer) {
+            return await queryServer(targetServer)
+          }
+        }
+
+        // 尝试按名称查找
+        const targetServer = servers.find(server =>
           server.name.toLowerCase() === serverName.toLowerCase()
         )
-        
+
         if (!targetServer) {
-          return `未找到名为"${serverName}"的服务器。可用服务器: ${servers.map(s => s.name).join(', ')}`
+          return `未找到"${serverName}"对应的服务器。可用服务器: ${servers.map(s => `${s.id}(${s.name})`).join(', ')}`
         }
-        
+
         return await queryServer(targetServer)
       }
-      
+
       const results = []
       for (const server of servers) {
         try {
           const result = await queryServer(server)
           results.push(result)
         } catch (error) {
-          results.push(`❌ ${server.name} 查询失败: ${error.message}`)
+          results.push(`❌ ${server.id} ${server.name} 查询失败: ${error.message}`)
         }
       }
-      
+
       return results.join('\n\n')
     })
-    
+
   async function queryServer(server: ServerConfig) {
     const hostWithPort = `${server.host}:${server.port}`
     const apiUrl = `https://motd.minebbs.com/api/status?ip=${server.host}&port=${server.port}`
-    
+
     try {
       const response = await ctx.http.get(apiUrl)
-      
+
       if (response.status !== 'online') {
-        return `🔴 ${server.name}\n🌐 ${hostWithPort}\n状态: 离线`
+        return `🔴 ${server.id} ${server.name}\n🌐 ${hostWithPort}\n状态: 离线`
       }
-      
-      let message = `🟢 ${server.name}\n`
+
+      let message = `🟢 ${server.id} ${server.name}\n`
       message += `🌐 IP: ${hostWithPort}\n`
       message += `📝 MOTD: \n${removeFormatting(response.pureMotd || response.motd?.text || '无')}\n`
       message += `🎮 版本: ${response.version} (协议 ${response.protocol})\n`
       message += `👥 玩家: ${response.players.online}/${response.players.max}\n`
       message += `⏱️ 延迟: ${response.delay}ms\n`
-      
+
       if (response.players.online > 0 && response.players.sample) {
-        const playerNames = Array.isArray(response.players.sample) 
-          ? response.players.sample 
+        const playerNames = Array.isArray(response.players.sample)
+          ? response.players.sample
           : response.players.sample.split(', ')
         message += `🎯 在线玩家: ${playerNames.join(', ')}`
       } else if (response.players.online > 0) {
@@ -154,27 +150,30 @@ export function apply(ctx: Context, config: Config) {
       } else {
         message += '🎯 当前没有在线玩家'
       }
-      
+
       return message
     } catch (error) {
-      ctx.logger('minecraft-search').warn(`查询服务器 ${server.name} 失败`, error)
+      ctx.logger('minecraft-search').warn(`查询服务器 ${server.id} ${server.name} 失败`, error)
       throw new Error(`查询失败: ${error.message}`)
     }
   }
-  
+
   ctx.command('mc/服务器列表')
     .action(async ({ session }) => {
       const { servers } = config
-      
+
       if (!servers || servers.length === 0) {
         return '未配置任何Minecraft服务器'
       }
-      
-      const serverList = servers.map((server, index) => 
-        `• ${index + 1}. ${server.name} - ${server.host}:${server.port}`
+
+      // 按ID排序
+      const sortedServers = [...servers].sort((a, b) => a.id - b.id)
+
+      const serverList = sortedServers.map(server =>
+        `• ${server.id}. ${server.name} - ${server.host}:${server.port}`
       ).join('\n')
-      
-      return `📋 已配置的Minecraft服务器:\n${serverList}\n\n使用"mc/查服 服务器名称"查询特定服务器`
+
+      return `📋 已配置的Minecraft服务器:\n${serverList}\n\n使用"mc/查服 ID或名称"查询特定服务器`
     })
 
   // 麦块联机功能
@@ -182,15 +181,15 @@ export function apply(ctx: Context, config: Config) {
     const minekuaiConfig = config.minekuai
 
     // 麦块联机实例列表
-    ctx.command('麦块/实例列表')
+    ctx.command('麦块/实例列表', { authority: 3 })
       .action(async ({ session }) => {
         try {
           const response = await minekuaiRequest(ctx, minekuaiConfig, '/')
-          
+
           if (!response || !response.data || response.data.length === 0) {
             return '❌ 未找到任何麦块联机实例'
           }
-          
+
           let message = '📋 麦块联机实例列表:\n'
           response.data.forEach((instance: any, index: number) => {
             const attrs = instance.attributes
@@ -200,7 +199,7 @@ export function apply(ctx: Context, config: Config) {
             message += `   💾 内存: ${attrs.limits.memory}MB\n`
             message += `   ⏰ 到期: ${attrs.exp_date}\n`
           })
-          
+
           return message
         } catch (error) {
           return `❌ 获取实例列表失败: ${error.message}`
@@ -208,21 +207,15 @@ export function apply(ctx: Context, config: Config) {
       })
 
     // 麦块联机实例信息
-    ctx.command('麦块/实例信息 <instanceId:string>')
-      .action(async ({ session }, instanceId) => {
-        if (!instanceId) {
-          return '❌ 请提供实例ID或标识符'
+    ctx.command('麦块/实例信息 <identifier:string>', { authority: 3 })
+      .action(async ({ session }, identifier) => {
+        if (!identifier) {
+          return '❌ 请提供实例标识符'
         }
 
         try {
-          // 先尝试通过配置的实例ID查找
-          const configuredInstance = minekuaiConfig.instances?.find(inst => 
-            inst.id === instanceId || inst.identifier === instanceId
-          )
-
-          const identifier = configuredInstance?.identifier || instanceId
           const response = await minekuaiRequest(ctx, minekuaiConfig, `/servers/${identifier}`)
-          
+
           if (!response || !response.attributes) {
             return '❌ 未找到指定实例'
           }
@@ -230,7 +223,7 @@ export function apply(ctx: Context, config: Config) {
           const attrs = response.attributes
           const allocations = attrs.relationships?.allocations?.data || []
           const defaultAllocation = allocations.find((alloc: any) => alloc.attributes.is_default) || allocations[0]
-          
+
           let message = `🖥️ 实例信息: ${removeFormatting(attrs.name || identifier)}\n`
           message += `🔧 标识符: ${identifier}\n`
           message += `📝 描述: ${removeFormatting(attrs.description || '无')}\n`
@@ -240,12 +233,12 @@ export function apply(ctx: Context, config: Config) {
           message += `💾 内存: ${attrs.limits.memory}MB\n`
           message += `⚡ CPU: ${attrs.limits.cpu}%\n`
           message += `💿 磁盘: ${attrs.limits.disk}MB\n`
-          
+
           if (defaultAllocation) {
             const allocAttrs = defaultAllocation.attributes
             message += `🌐 连接地址: ${allocAttrs.ip_alias || allocAttrs.ip}:${allocAttrs.port}\n`
           }
-          
+
           return message
         } catch (error) {
           return `❌ 获取实例信息失败: ${error.message}`
@@ -253,27 +246,22 @@ export function apply(ctx: Context, config: Config) {
       })
 
     // 麦块联机实例资源使用情况
-    ctx.command('麦块/实例资源 <instanceId:string>')
-      .action(async ({ session }, instanceId) => {
-        if (!instanceId) {
-          return '❌ 请提供实例ID或标识符'
+    ctx.command('麦块/实例资源 <identifier:string>', { authority: 3 })
+      .action(async ({ session }, identifier) => {
+        if (!identifier) {
+          return '❌ 请提供实例标识符'
         }
 
         try {
-          const configuredInstance = minekuaiConfig.instances?.find(inst => 
-            inst.id === instanceId || inst.identifier === instanceId
-          )
-
-          const identifier = configuredInstance?.identifier || instanceId
           const response = await minekuaiRequest(ctx, minekuaiConfig, `/servers/${identifier}/resources`)
-          
+
           if (!response || !response.attributes) {
             return '❌ 未找到指定实例的资源信息'
           }
 
           const attrs = response.attributes
           const resources = attrs.resources
-          
+
           let message = `📊 实例资源使用情况: ${identifier}\n`
           message += `🔧 当前状态: ${attrs.current_state}\n`
           message += `⏸️ 是否暂停: ${attrs.is_suspended ? '是' : '否'}\n`
@@ -283,7 +271,7 @@ export function apply(ctx: Context, config: Config) {
           message += `📤 网络上传: ${Math.round((resources.network_tx_bytes || 0) / 1024 / 1024)} MB\n`
           message += `📥 网络下载: ${Math.round((resources.network_rx_bytes || 0) / 1024 / 1024)} MB\n`
           message += `⏰ 运行时间: ${Math.round((resources.uptime || 0) / 1000)} 秒\n`
-          
+
           return message
         } catch (error) {
           return `❌ 获取资源信息失败: ${error.message}`
@@ -291,10 +279,10 @@ export function apply(ctx: Context, config: Config) {
       })
 
     // 麦块联机实例电源控制
-    ctx.command('麦块/实例电源 <instanceId:string> <action:string>')
-      .action(async ({ session }, instanceId, action) => {
-        if (!instanceId || !action) {
-          return '❌ 请提供实例ID和操作类型 (start/stop/restart/kill)'
+    ctx.command('麦块/实例电源 <identifier:string> <action:string>', { authority: 3 })
+      .action(async ({ session }, identifier, action) => {
+        if (!identifier || !action) {
+          return '❌ 请提供实例标识符和操作类型 (start/stop/restart/kill)'
         }
 
         const validActions = ['start', 'stop', 'restart', 'kill']
@@ -303,15 +291,10 @@ export function apply(ctx: Context, config: Config) {
         }
 
         try {
-          const configuredInstance = minekuaiConfig.instances?.find(inst => 
-            inst.id === instanceId || inst.identifier === instanceId
-          )
-
-          const identifier = configuredInstance?.identifier || instanceId
           await minekuaiRequest(ctx, minekuaiConfig, `/servers/${identifier}/power`, 'POST', {
             signal: action
           })
-          
+
           return `✅ 已发送 ${action} 指令到实例 ${identifier}`
         } catch (error) {
           return `❌ 电源操作失败: ${error.message}`
@@ -319,22 +302,17 @@ export function apply(ctx: Context, config: Config) {
       })
 
     // 麦块联机实例发送命令
-    ctx.command('麦块/实例命令 <instanceId:string> <command:text>')
-      .action(async ({ session }, instanceId, command) => {
-        if (!instanceId || !command) {
-          return '❌ 请提供实例ID和命令内容'
+    ctx.command('麦块/实例命令 <identifier:string> <command:text>', { authority: 3 })
+      .action(async ({ session }, identifier, command) => {
+        if (!identifier || !command) {
+          return '❌ 请提供实例标识符和命令内容'
         }
 
         try {
-          const configuredInstance = minekuaiConfig.instances?.find(inst => 
-            inst.id === instanceId || inst.identifier === instanceId
-          )
-
-          const identifier = configuredInstance?.identifier || instanceId
           await minekuaiRequest(ctx, minekuaiConfig, `/servers/${identifier}/command`, 'POST', {
             command: command
           })
-          
+
           return `✅ 已发送命令到实例 ${identifier}: ${command}`
         } catch (error) {
           return `❌ 发送命令失败: ${error.message}`
@@ -342,11 +320,11 @@ export function apply(ctx: Context, config: Config) {
       })
 
     // 麦块联机账户信息
-    ctx.command('麦块/账户信息')
+    ctx.command('麦块/账户信息', { authority: 3 })
       .action(async ({ session }) => {
         try {
           const response = await minekuaiRequest(ctx, minekuaiConfig, '/account')
-          
+
           if (!response || !response.attributes) {
             return '❌ 获取账户信息失败'
           }
@@ -359,7 +337,7 @@ export function apply(ctx: Context, config: Config) {
           message += `🆔 用户ID: ${attrs.id}\n`
           message += `🔧 管理员: ${attrs.admin ? '是' : '否'}\n`
           message += `🌐 语言: ${attrs.language}\n`
-          
+
           return message
         } catch (error) {
           return `❌ 获取账户信息失败: ${error.message}`
