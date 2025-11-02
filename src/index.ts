@@ -130,7 +130,7 @@ export function apply(ctx: Context, config: Config) {
       const response = await ctx.http.get(apiUrl)
 
       if (response.status !== 'online') {
-        return `🔴 ${server.id} ${server.name}\n🌐 ${hostWithPort}\n状态: 离线`
+        return `🔴 [${server.id}] ${server.name}\n🌐 IP: ${hostWithPort}\n状态: 离线`
       }
 
       let message = `🟢 [${server.id}] ${server.name}\n`
