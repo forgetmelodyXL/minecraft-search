@@ -409,7 +409,7 @@ export function apply(ctx: Context, config: Config) {
           const serverName = getServerName(instanceId, minekuaiConfig, config.servers)
           
           await minekuaiRequest(ctx, minekuaiConfig, `/servers/${instanceId}/power`, 'POST', {
-            signal: englishAction
+            "signal": englishAction
           })
 
           let message = `✅ 已发送 ${action} 指令到实例 ${serverName}`
