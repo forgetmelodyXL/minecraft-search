@@ -256,6 +256,32 @@ export function apply(ctx: Context, config: Config) {
   if (config.minekuai?.apiKey) {
     const minekuaiConfig = config.minekuai
 
+    // 新增：无权限要求的开服指令
+    ctx.command('开服 <serverId:string>')
+      .action(async ({ session }, serverId) => {
+        if (!serverId) {
+          return '❌ 请提供服务器ID。使用"mc/服务器列表"查看可用服务器'
+        }
+
+        if (!minekuaiConfig.instances || minekuaiConfig.instances.length === 0) {
+          return '❌ 未配置任何服务器与实例的映射关系，无法执行开服操作'
+        }
+
+        try {
+          // 解析标识符（支持服务器ID）
+          const instanceId = resolveInstanceIdentifier(serverId, minekuaiConfig, config.servers)
+          const serverName = getServerName(instanceId, minekuaiConfig, config.servers)
+          
+          await minekuaiRequest(ctx, minekuaiConfig, `/servers/${instanceId}/power`, 'POST', {
+            "signal": "start"
+          })
+
+          return `✅ 已发送启动指令到服务器 ${serverName} (ID: ${serverId})，服务器正在启动中，请稍后使用"mc/查服 ${serverId}"查看状态`
+        } catch (error) {
+          return `❌ 开服失败: ${error.message}`
+        }
+      })
+
     // 新增：显示实例映射关系命令
     ctx.command('麦块/实例映射', { authority: 3 })
       .action(async ({ session }) => {
