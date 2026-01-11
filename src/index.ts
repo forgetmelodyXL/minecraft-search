@@ -96,7 +96,7 @@ function resolveInstanceIdentifier(input: string, minekuaiConfig: MinekuaiConfig
   if (!isNaN(Number(input))) {
     const serverId = parseInt(input)
     const mapping = minekuaiConfig.instances?.find(m => m.id === serverId)
-    
+
     if (mapping) {
       return mapping.instanceId
     } else {
@@ -109,7 +109,7 @@ function resolveInstanceIdentifier(input: string, minekuaiConfig: MinekuaiConfig
       }
     }
   }
-  
+
   // 如果不是数字，直接返回输入作为实例ID
   return input
 }
@@ -132,7 +132,7 @@ function mapActionToEnglish(action: string): string {
     '重启': 'restart',
     '强制关闭': 'kill'
   }
-  
+
   return actionMap[action] || action
 }
 
@@ -141,7 +141,6 @@ export function apply(ctx: Context, config: Config) {
   ctx.command('mc/查服 [serverName:string]')
     .action(async ({ session }, serverName) => {
       const { servers } = config
-
       if (!servers || servers.length === 0) {
         return '未配置任何Minecraft服务器'
       }
@@ -160,11 +159,9 @@ export function apply(ctx: Context, config: Config) {
         const targetServer = servers.find(server =>
           server.name.toLowerCase() === serverName.toLowerCase()
         )
-
         if (!targetServer) {
           return `未找到"${serverName}"对应的服务器。可用服务器: ${servers.map(s => `${s.id}(${s.name})`).join(', ')}`
         }
-
         return await queryServer(targetServer)
       }
 
@@ -177,13 +174,12 @@ export function apply(ctx: Context, config: Config) {
           results.push(`❌ ${server.id} ${server.name} 查询失败: ${error.message}`)
         }
       }
-
       return results.join('\n\n')
     })
 
   async function queryServer(server: ServerConfig) {
     const hostWithPort = `${server.host}:${server.port}`
-    const apiUrl = `https://motd.minebbs.com/api/status?ip=${server.host}&port=${server.port}`
+    const apiUrl = `https://api.imlazy.ink/mcapi/?type=json&host=${server.host}&port=${server.port}&name=${encodeURIComponent(server.name)}`
 
     let retryCount = 0
     const maxRetries = 3
@@ -195,32 +191,38 @@ export function apply(ctx: Context, config: Config) {
           timeout: 5000 // 设置5秒超时
         })
 
-        if (response.status !== 'online') {
+        // 根据新API的响应结构调整状态判断
+        if (response.status !== '在线') {
           return `🔴 [${server.id}] ${server.name}\n🌐 IP: ${hostWithPort}\n状态: 离线`
         }
 
         let message = `🟢 [${server.id}] ${server.name}\n`
         message += `🌐 IP: ${hostWithPort}\n`
-        message += `📝 MOTD: \n${removeFormatting(response.pureMotd || response.motd?.text || '无')}\n`
-        message += `🎮 版本: ${response.version}\n`
-        message += `👥 玩家: ${response.players.online}/${response.players.max}\n`
-        message += `⏱️ 延迟: ${response.delay}ms\n`
 
-        if (response.players.online > 0 && response.players.sample) {
-          const playerNames = Array.isArray(response.players.sample)
-            ? response.players.sample
-            : response.players.sample.split(', ')
+        // 处理MOTD - 新API中motd是一个对象，包含text属性
+        const motdText = response.motd?.text || '无'
+        message += `📝 MOTD: \n${removeFormatting(motdText)}\n`
+
+        message += `🎮 版本: ${response.version || '未知'}\n`
+        message += `👥 玩家: ${response.players_online}/${response.players_max}\n`
+
+        // 新API没有延迟字段，移除延迟显示
+        // message += `⏱️ 延迟: ${response.delay}ms\n`
+
+        // 处理在线玩家列表 - 新API中players是数组对象
+        if (response.players_online > 0 && response.players) {
+          const playerNames = response.players.map(player => player.name)
           message += `🎯 在线玩家: ${playerNames.join(', ')}`
-        } else if (response.players.online > 0) {
+        } else if (response.players_online > 0) {
           message += '🎯 在线玩家: 有玩家在线但未获取到列表'
         } else {
           message += '🎯 当前没有在线玩家'
         }
 
         return message
+
       } catch (error) {
         retryCount++
-        
         if (retryCount <= maxRetries) {
           ctx.logger('minecraft-search').warn(`查询服务器 ${server.id} ${server.name} 失败，第 ${retryCount} 次重试...`, error.message)
           // 等待一段时间后重试
@@ -232,6 +234,11 @@ export function apply(ctx: Context, config: Config) {
         }
       }
     }
+  }
+
+  // MOTD格式化去除函数（需要确保此函数存在）
+  function removeFormatting(text: string): string {
+    return text.replace(/§[0-9a-fk-or]/g, '')
   }
 
   ctx.command('mc/服务器列表')
@@ -256,31 +263,139 @@ export function apply(ctx: Context, config: Config) {
   if (config.minekuai?.apiKey) {
     const minekuaiConfig = config.minekuai
 
-    // 新增：无权限要求的开服指令
+    // 定义重试函数
+    async function withRetry(fn, maxRetries = 3) {
+      let lastError;
+      for (let i = 0; i < maxRetries; i++) {
+        try {
+          return await fn();
+        } catch (error) {
+          lastError = error;
+          console.log(`操作失败，第${i + 1}次重试: ${error.message}`);
+          if (i < maxRetries - 1) {
+            // 等待一小段时间后重试
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
+        }
+      }
+      throw lastError;
+    }
+
     ctx.command('开服 <serverId:string>')
       .action(async ({ session }, serverId) => {
         if (!serverId) {
-          return '❌ 请提供服务器ID。使用"mc/服务器列表"查看可用服务器'
+          return '❌ 请提供服务器ID。使用"mc/服务器列表"查看可用服务器';
         }
 
         if (!minekuaiConfig.instances || minekuaiConfig.instances.length === 0) {
-          return '❌ 未配置任何服务器与实例的映射关系，无法执行开服操作'
+          return '❌ 未配置任何服务器与实例的映射关系，无法执行开服操作';
         }
 
         try {
           // 解析标识符（支持服务器ID）
-          const instanceId = resolveInstanceIdentifier(serverId, minekuaiConfig, config.servers)
-          const serverName = getServerName(instanceId, minekuaiConfig, config.servers)
-          
-          await minekuaiRequest(ctx, minekuaiConfig, `/servers/${instanceId}/power`, 'POST', {
-            "signal": "start"
-          })
+          const instanceId = resolveInstanceIdentifier(serverId, minekuaiConfig, config.servers);
+          const serverName = getServerName(instanceId, minekuaiConfig, config.servers);
 
-          return `✅ 已发送启动指令到服务器 ${serverName} (ID: ${serverId})，服务器正在启动中，请稍后使用"mc/查服 ${serverId}"查看状态`
+          // 使用重试功能
+          await withRetry(async () => {
+            await minekuaiRequest(ctx, minekuaiConfig, `/servers/${instanceId}/power`, 'POST', {
+              "signal": "start"
+            });
+          });
+
+          return `✅ 已发送启动指令到服务器 ${serverName} (ID: ${serverId})，服务器正在启动中，请稍后使用"mc/查服 ${serverId}"查看状态`;
         } catch (error) {
-          return `❌ 开服失败: ${error.message}`
+          return `❌ 开服失败: ${error.message}`;
         }
-      })
+      });
+
+    ctx.command('麦块/实例电源 <identifier:string> <action:string>', { authority: 3 })
+      .action(async ({ session }, identifier, action) => {
+        if (!identifier || !action) {
+          return '❌ 请提供实例标识符/服务器ID和操作类型 (启动/关闭/重启/强制关闭)';
+        }
+
+        // 将中文操作类型映射为英文
+        const englishAction = mapActionToEnglish(action);
+
+        const validActions = ['启动', '关闭', '重启', '强制关闭'];
+        const validEnglishActions = ['start', 'stop', 'restart', 'kill'];
+
+        if (!validActions.includes(action) && !validEnglishActions.includes(englishAction)) {
+          return `❌ 无效的操作类型。可用操作: ${validActions.join(', ')}`;
+        }
+
+        try {
+          // 解析标识符（支持服务器ID或实例ID）
+          const instanceId = resolveInstanceIdentifier(identifier, minekuaiConfig, config.servers);
+          const serverName = getServerName(instanceId, minekuaiConfig, config.servers);
+
+          // 使用重试功能
+          await withRetry(async () => {
+            await minekuaiRequest(ctx, minekuaiConfig, `/servers/${instanceId}/power`, 'POST', {
+              "signal": englishAction
+            });
+          });
+
+          let message = `✅ 已发送 ${action} 指令到实例 ${serverName}`;
+          if (identifier !== instanceId) {
+            message += ` (服务器ID: ${identifier})`;
+          }
+          return message;
+        } catch (error) {
+          return `❌ 电源操作失败: ${error.message}`;
+        }
+      });
+
+    // 新增的重启指令
+    ctx.command('重启 <identifier:string>')
+      .action(async ({ session }, identifier) => {
+        if (!identifier) {
+          return '❌ 请提供实例标识符/服务器ID';
+        }
+
+        try {
+          // 解析标识符（支持服务器ID或实例ID）
+          const instanceId = resolveInstanceIdentifier(identifier, minekuaiConfig, config.servers);
+          const serverName = getServerName(instanceId, minekuaiConfig, config.servers);
+
+          console.log(`开始执行重启流程: 实例 ${serverName} (ID: ${identifier})`);
+
+          // 步骤1: 发送重启信号（带重试）
+          try {
+            await withRetry(async () => {
+              console.log(`发送重启信号到实例: ${instanceId}`);
+              await minekuaiRequest(ctx, minekuaiConfig, `/servers/${instanceId}/power`, 'POST', {
+                "signal": "restart"
+              });
+            });
+            console.log(`重启信号发送成功: ${instanceId}`);
+          } catch (error) {
+            console.log(`重启信号发送失败，继续执行强制关闭: ${error.message}`);
+          }
+
+          // 等待1秒
+          console.log('等待1秒后执行强制关闭...');
+          await new Promise(resolve => setTimeout(resolve, 1000));
+
+          // 步骤2: 发送强制关闭信号（带重试）
+          await withRetry(async () => {
+            console.log(`发送强制关闭信号到实例: ${instanceId}`);
+            await minekuaiRequest(ctx, minekuaiConfig, `/servers/${instanceId}/power`, 'POST', {
+              "signal": "kill"
+            });
+          });
+          console.log(`强制关闭信号发送成功: ${instanceId}`);
+
+          let message = `✅ 已发送重启指令到实例 ${serverName} (包含1秒后强制关闭)`;
+          if (identifier !== instanceId) {
+            message += ` (服务器ID: ${identifier})`;
+          }
+          return message;
+        } catch (error) {
+          return `❌ 重启操作失败: ${error.message}`;
+        }
+      });
 
     // 新增：显示实例映射关系命令
     ctx.command('麦块/实例映射', { authority: 3 })
@@ -337,7 +452,7 @@ export function apply(ctx: Context, config: Config) {
           // 解析标识符（支持服务器ID或实例ID）
           const instanceId = resolveInstanceIdentifier(identifier, minekuaiConfig, config.servers)
           const serverName = getServerName(instanceId, minekuaiConfig, config.servers)
-          
+
           const response = await minekuaiRequest(ctx, minekuaiConfig, `/servers/${instanceId}`)
 
           if (!response || !response.attributes) {
@@ -383,7 +498,7 @@ export function apply(ctx: Context, config: Config) {
           // 解析标识符（支持服务器ID或实例ID）
           const instanceId = resolveInstanceIdentifier(identifier, minekuaiConfig, config.servers)
           const serverName = getServerName(instanceId, minekuaiConfig, config.servers)
-          
+
           const response = await minekuaiRequest(ctx, minekuaiConfig, `/servers/${instanceId}/resources`)
 
           if (!response || !response.attributes) {
@@ -412,42 +527,6 @@ export function apply(ctx: Context, config: Config) {
         }
       })
 
-    // 麦块联机实例电源控制
-    ctx.command('麦块/实例电源 <identifier:string> <action:string>', { authority: 3 })
-      .action(async ({ session }, identifier, action) => {
-        if (!identifier || !action) {
-          return '❌ 请提供实例标识符/服务器ID和操作类型 (启动/关闭/重启/强制关闭)'
-        }
-
-        // 将中文操作类型映射为英文
-        const englishAction = mapActionToEnglish(action)
-        
-        const validActions = ['启动', '关闭', '重启', '强制关闭']
-        const validEnglishActions = ['start', 'stop', 'restart', 'kill']
-        
-        if (!validActions.includes(action) && !validEnglishActions.includes(englishAction)) {
-          return `❌ 无效的操作类型。可用操作: ${validActions.join(', ')}`
-        }
-
-        try {
-          // 解析标识符（支持服务器ID或实例ID）
-          const instanceId = resolveInstanceIdentifier(identifier, minekuaiConfig, config.servers)
-          const serverName = getServerName(instanceId, minekuaiConfig, config.servers)
-          
-          await minekuaiRequest(ctx, minekuaiConfig, `/servers/${instanceId}/power`, 'POST', {
-            "signal": englishAction
-          })
-
-          let message = `✅ 已发送 ${action} 指令到实例 ${serverName}`
-          if (identifier !== instanceId) {
-            message += ` (服务器ID: ${identifier})`
-          }
-          return message
-        } catch (error) {
-          return `❌ 电源操作失败: ${error.message}`
-        }
-      })
-
     // 麦块联机实例发送命令
     ctx.command('麦块/实例命令 <identifier:string> <command:text>', { authority: 3 })
       .action(async ({ session }, identifier, command) => {
@@ -459,7 +538,7 @@ export function apply(ctx: Context, config: Config) {
           // 解析标识符（支持服务器ID或实例ID）
           const instanceId = resolveInstanceIdentifier(identifier, minekuaiConfig, config.servers)
           const serverName = getServerName(instanceId, minekuaiConfig, config.servers)
-          
+
           await minekuaiRequest(ctx, minekuaiConfig, `/servers/${instanceId}/command`, 'POST', {
             command: command
           })
