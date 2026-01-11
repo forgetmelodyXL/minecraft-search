@@ -51,11 +51,6 @@ export const Config: Schema<Config> = Schema.object({
     .description('麦块联机配置')
 })
 
-// 去除Minecraft格式符号的辅助函数
-function removeFormatting(str: string): string {
-  return str.replace(/§[0-9a-fk-or]/g, '')
-}
-
 // 麦块联机API请求函数
 async function minekuaiRequest(ctx: Context, config: MinekuaiConfig, endpoint: string, method: 'GET' | 'POST' = 'GET', data?: any) {
   const url = `${config.baseUrl}${endpoint}`
@@ -139,107 +134,99 @@ function mapActionToEnglish(action: string): string {
 export function apply(ctx: Context, config: Config) {
   // 原有的Minecraft查服功能
   ctx.command('mc/查服 [serverName:string]')
-    .action(async ({ session }, serverName) => {
-      const { servers } = config
-      if (!servers || servers.length === 0) {
-        return '未配置任何Minecraft服务器'
-      }
+  .action(async ({ session }, serverName) => {
+    const { servers } = config
+    if (!servers || servers.length === 0) {
+      return '未配置任何Minecraft服务器'
+    }
 
-      if (serverName) {
-        // 尝试按ID查找（如果输入是数字）
-        if (!isNaN(Number(serverName))) {
-          const id = parseInt(serverName)
-          const targetServer = servers.find(server => server.id === id)
-          if (targetServer) {
-            return await queryServer(targetServer)
-          }
-        }
-
-        // 尝试按名称查找
-        const targetServer = servers.find(server =>
-          server.name.toLowerCase() === serverName.toLowerCase()
-        )
-        if (!targetServer) {
-          return `未找到"${serverName}"对应的服务器。可用服务器: ${servers.map(s => `${s.id}(${s.name})`).join(', ')}`
-        }
-        return await queryServer(targetServer)
-      }
-
-      const results = []
-      for (const server of servers) {
-        try {
-          const result = await queryServer(server)
-          results.push(result)
-        } catch (error) {
-          results.push(`❌ ${server.id} ${server.name} 查询失败: ${error.message}`)
+    if (serverName) {
+      // 尝试按ID查找（如果输入是数字）
+      if (!isNaN(Number(serverName))) {
+        const id = parseInt(serverName)
+        const targetServer = servers.find(server => server.id === id)
+        if (targetServer) {
+          return await queryServer(targetServer)
         }
       }
-      return results.join('\n\n')
-    })
 
-  async function queryServer(server: ServerConfig) {
-    const hostWithPort = `${server.host}:${server.port}`
-    const apiUrl = `https://api.imlazy.ink/mcapi/?type=json&host=${server.host}&port=${server.port}&name=${encodeURIComponent(server.name)}`
+      // 尝试按名称查找
+      const targetServer = servers.find(server =>
+        server.name.toLowerCase() === serverName.toLowerCase()
+      )
+      if (!targetServer) {
+        return `未找到"${serverName}"对应的服务器。可用服务器: ${servers.map(s => `${s.id}(${s.name})`).join(', ')}`
+      }
+      return await queryServer(targetServer)
+    }
 
-    let retryCount = 0
-    const maxRetries = 3
-    const retryDelay = 1000 // 1秒延迟
-
-    while (retryCount <= maxRetries) {
+    const results = []
+    for (const server of servers) {
       try {
-        const response = await ctx.http.get(apiUrl, {
-          timeout: 5000 // 设置5秒超时
-        })
-
-        // 根据新API的响应结构调整状态判断
-        if (response.status !== '在线') {
-          return `🔴 [${server.id}] ${server.name}\n🌐 IP: ${hostWithPort}\n状态: 离线`
-        }
-
-        let message = `🟢 [${server.id}] ${server.name}\n`
-        message += `🌐 IP: ${hostWithPort}\n`
-
-        // 处理MOTD - 新API中motd是一个对象，包含text属性
-        const motdText = response.motd?.text || '无'
-        message += `📝 MOTD: \n${removeFormatting(motdText)}\n`
-
-        message += `🎮 版本: ${response.version || '未知'}\n`
-        message += `👥 玩家: ${response.players_online}/${response.players_max}\n`
-
-        // 新API没有延迟字段，移除延迟显示
-        // message += `⏱️ 延迟: ${response.delay}ms\n`
-
-        // 处理在线玩家列表 - 新API中players是数组对象
-        if (response.players_online > 0 && response.players) {
-          const playerNames = response.players.map(player => player.name)
-          message += `🎯 在线玩家: ${playerNames.join(', ')}`
-        } else if (response.players_online > 0) {
-          message += '🎯 在线玩家: 有玩家在线但未获取到列表'
-        } else {
-          message += '🎯 当前没有在线玩家'
-        }
-
-        return message
-
+        const result = await queryServer(server)
+        results.push(result)
       } catch (error) {
-        retryCount++
-        if (retryCount <= maxRetries) {
-          ctx.logger('minecraft-search').warn(`查询服务器 ${server.id} ${server.name} 失败，第 ${retryCount} 次重试...`, error.message)
-          // 等待一段时间后重试
-          await new Promise(resolve => setTimeout(resolve, retryDelay * retryCount))
-        } else {
-          ctx.logger('minecraft-search').warn(`查询服务器 ${server.id} ${server.name} 重试 ${maxRetries} 次后失败`, error)
-          // 修改为友好的错误提示
-          throw new Error('服务器繁忙，请稍后再试。')
-        }
+        results.push(`❌ ${server.id} ${server.name} 查询失败: ${error.message}`)
       }
     }
-  }
+    return results.join('\n\n')
+  })
 
-  // MOTD格式化去除函数（需要确保此函数存在）
-  function removeFormatting(text: string): string {
-    return text.replace(/§[0-9a-fk-or]/g, '')
+async function queryServer(server: ServerConfig) {
+  const hostWithPort = `${server.host}:${server.port}`
+  const apiUrl = `https://api.mcsrvstat.us/2/${server.host}${server.port !== 25565 ? ':' + server.port : ''}`
+  
+  try {
+    const response = await ctx.http.get(apiUrl, {
+      timeout: 5000 // 设置5秒超时
+    })
+
+    // 根据API的响应结构调整状态判断
+    if (!response.online) {
+      return `🔴 [${server.id}] ${server.name}\n🌐 IP: ${hostWithPort}\n状态: 离线`
+    }
+
+    let message = `🟢 [${server.id}] ${server.name}\n`
+    message += `🌐 IP: ${hostWithPort}\n`
+
+    // 处理MOTD - 新API中motd.clean是去除格式的MOTD数组
+    let motdText = '无'
+    if (response.motd && response.motd.clean) {
+      motdText = Array.isArray(response.motd.clean) 
+        ? response.motd.clean.join('\n')
+        : response.motd.clean
+    }
+    message += `📝 MOTD: \n${motdText}\n`
+
+    message += `🎮 版本: ${response.version || '未知'}\n`
+    
+    // 处理玩家数量
+    const onlinePlayers = response.players?.online || 0
+    const maxPlayers = response.players?.max || 0
+    message += `👥 玩家: ${onlinePlayers}/${maxPlayers}\n`
+
+    // 处理在线玩家列表
+    if (onlinePlayers > 0 && response.players && response.players.list) {
+      const playerNames = response.players.list.map(player => player.name)
+      message += `🎯 在线玩家: ${playerNames.join(', ')}`
+    } else if (onlinePlayers > 0) {
+      message += '🎯 在线玩家: 有玩家在线但未获取到列表'
+    } else {
+      message += '🎯 当前没有在线玩家'
+    }
+
+    return message
+
+  } catch (error) {
+    ctx.logger('minecraft-search').warn(`查询服务器 ${server.id} ${server.name} 失败`, error)
+    throw new Error('查询服务器失败，请检查服务器地址是否正确或稍后再试。')
   }
+}
+
+// 保留格式化去除函数（虽然新API提供了clean字段，但以防万一）
+function removeFormatting(text: string): string {
+  return text.replace(/§[0-9a-fk-or]/g, '')
+}
 
   ctx.command('mc/服务器列表')
     .action(async ({ session }) => {
