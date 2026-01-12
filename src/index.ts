@@ -1,568 +1,448 @@
-import { Context, Schema } from 'koishi'
+import { Context, Schema, h } from 'koishi'
 
-export const name = 'minecraft-search'
+export const name = 'minecraft-status'
 
+// 服务器配置接口
 export interface ServerConfig {
-  id: number // 改为数字类型
+  id: number
   name: string
   host: string
-  port: number
-}
-
-export interface InstanceMapping {
-  id: number // 服务器ID
-  instanceId: string // 麦块联机实例ID
-}
-
-export interface MinekuaiConfig {
-  apiKey: string
-  baseUrl?: string
-  instances?: InstanceMapping[] // 新增实例映射配置
+  minekuaiInstanceId?: string  // 新增：麦块实例ID
 }
 
 export interface Config {
   servers: ServerConfig[]
-  minekuai?: MinekuaiConfig
+  querySettings: QuerySettings
+  minekuaiSettings: MinekuaiSettings  // 新增：麦块联机配置
 }
 
-export const Config: Schema<Config> = Schema.object({
-  servers: Schema.array(Schema.object({
-    id: Schema.number().description('服务器ID'), // 改为数字类型
-    name: Schema.string().description('服务器名称'),
-    host: Schema.string().description('服务器地址'),
-    port: Schema.number().description('服务器端口').default(25565),
-  }))
-    .description('Minecraft服务器列表')
-    .role('table')
-    .collapse()
-    .required(),
+export interface QuerySettings {
+  defaultTimeout: number
+  enableQuery: boolean
+  showIcon: boolean
+  showPlayers: boolean
+  showPlugins: boolean
+  showMods: boolean
+  cacheTime: number
+}
 
-  minekuai: Schema.object({
-    apiKey: Schema.string().description('麦块联机API密钥'),
-    baseUrl: Schema.string().description('API基础URL').default('https://minekuai.com/api/client'),
-    instances: Schema.array(Schema.object({
-      id: Schema.number().description('服务器ID（对应上方服务器列表中的ID）'),
-      instanceId: Schema.string().description('麦块联机实例ID')
-    }))
-      .description('服务器与实例关联配置（将服务器ID映射到麦块联机实例ID）')
-      .role('table')
-      .collapse()
-  })
-    .description('麦块联机配置')
-})
+// 新增：麦块联机配置接口
+export interface MinekuaiSettings {
+  apiUrl: string
+  apiKey: string
+}
 
-// 麦块联机API请求函数
-async function minekuaiRequest(ctx: Context, config: MinekuaiConfig, endpoint: string, method: 'GET' | 'POST' = 'GET', data?: any) {
-  const url = `${config.baseUrl}${endpoint}`
+export const Config: Schema<Config> = Schema.intersect([
+  Schema.object({
+    servers: Schema.array(Schema.object({
+      id: Schema.number().required().description('服务器ID (数字)'),
+      name: Schema.string().required().description('服务器名称'),
+      host: Schema.string().required().description('服务器地址 (如: play.hypixel.net)'),
+      minekuaiInstanceId: Schema.string().description('麦块实例ID (用于电源控制)')
+    })).description('服务器列表').role('table').default([
+      { id: 1, name: 'Hypixel', host: 'mc.hypixel.net', minekuaiInstanceId: '' },
+      { id: 2, name: 'Minecraft 官方演示', host: 'demo.mcstatus.io', minekuaiInstanceId: '' }
+    ])
+  }).description('服务器配置'),
+  
+  Schema.object({
+    querySettings: Schema.object({
+      defaultTimeout: Schema.number().min(1).max(30).description('请求超时时间(秒)').default(5),
+      enableQuery: Schema.boolean().description('启用查询功能获取插件信息').default(true),
+      showIcon: Schema.boolean().description('显示服务器图标').default(true),
+      showPlayers: Schema.boolean().description('显示在线玩家').default(true),
+      showPlugins: Schema.boolean().description('显示插件列表').default(false),
+      showMods: Schema.boolean().description('显示模组列表').default(false),
+      cacheTime: Schema.number().min(0).max(3600).description('状态缓存时间(秒)').default(30)
+    })
+  }).description('查询设置'),
+  
+  // 新增：麦块联机配置分类
+  Schema.object({
+    minekuaiSettings: Schema.object({
+      apiUrl: Schema.string().description('麦块API地址').default('https://minekuai.com/api/client'),
+      apiKey: Schema.string().description('麦块API密钥').default('')
+    })
+  }).description('麦块联机配置')
+])
+
+export function apply(ctx: Context, config: Config) {
+  const cache = new Map<string, { data: any, timestamp: number }>()
+
+// 修改后的麦块API请求函数
+async function minekuaiApiRequest(instanceId: string, operation: string, maxRetries = 3) {
+  const { apiUrl, apiKey } = config.minekuaiSettings
+  
+  if (!apiKey) {
+    throw new Error('麦块API密钥未配置')
+  }
+  
+  if (!apiUrl) {
+    throw new Error('麦块API地址未配置')
+  }
+  
+  // 清理API地址，确保格式正确
+  const baseUrl = apiUrl.replace(/\/+$/, '') // 移除末尾的斜杠
+  const url = `${baseUrl}/servers/${instanceId}/power`  // 修改端点格式
+  
   const headers = {
-    'Authorization': `Bearer ${config.apiKey}`,
+    'Authorization': `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
     'Accept': 'application/json'
   }
-
-  try {
-    if (method === 'GET') {
-      return await ctx.http.get(url, { headers })
-    } else {
-      return await ctx.http.post(url, data, { headers })
-    }
-  } catch (error) {
-    ctx.logger('minecraft-search').warn(`麦块联机API请求失败: ${endpoint}`, error)
-
-    let errorMessage = error.message
-    try {
-      if (error.response && error.response.data) {
-        if (error.response.data.errors) {
-          const apiError = error.response.data.errors[0]
-          errorMessage = `[${apiError.status}] ${apiError.code}: ${apiError.detail}`
-        } else if (error.response.data.message) {
-          errorMessage = error.response.data.message
-        }
-      }
-    } catch (e) { }
-
-    throw new Error(errorMessage)
-  }
-}
-
-// 根据输入解析实例标识符的辅助函数
-function resolveInstanceIdentifier(input: string, minekuaiConfig: MinekuaiConfig, servers: ServerConfig[]): string {
-  // 如果输入是数字，尝试从映射中查找实例ID
-  if (!isNaN(Number(input))) {
-    const serverId = parseInt(input)
-    const mapping = minekuaiConfig.instances?.find(m => m.id === serverId)
-
-    if (mapping) {
-      return mapping.instanceId
-    } else {
-      // 如果没有找到映射，检查是否存在对应的服务器
-      const server = servers.find(s => s.id === serverId)
-      if (server) {
-        throw new Error(`服务器ID ${serverId} (${server.name}) 未配置实例映射关系`)
-      } else {
-        throw new Error(`未找到ID为 ${serverId} 的服务器`)
-      }
-    }
-  }
-
-  // 如果不是数字，直接返回输入作为实例ID
-  return input
-}
-
-// 获取服务器名称的辅助函数
-function getServerName(instanceId: string, minekuaiConfig: MinekuaiConfig, servers: ServerConfig[]): string {
-  const mapping = minekuaiConfig.instances?.find(m => m.instanceId === instanceId)
-  if (mapping) {
-    const server = servers.find(s => s.id === mapping.id)
-    return server ? server.name : `服务器ID: ${mapping.id}`
-  }
-  return instanceId
-}
-
-// 将中文操作类型映射为英文操作类型
-function mapActionToEnglish(action: string): string {
-  const actionMap: { [key: string]: string } = {
-    '启动': 'start',
-    '关闭': 'stop',
-    '重启': 'restart',
-    '强制关闭': 'kill'
-  }
-
-  return actionMap[action] || action
-}
-
-export function apply(ctx: Context, config: Config) {
-  // 原有的Minecraft查服功能
-  ctx.command('mc/查服 [serverName:string]')
-  .action(async ({ session }, serverName) => {
-    const { servers } = config
-    if (!servers || servers.length === 0) {
-      return '未配置任何Minecraft服务器'
-    }
-
-    if (serverName) {
-      // 尝试按ID查找（如果输入是数字）
-      if (!isNaN(Number(serverName))) {
-        const id = parseInt(serverName)
-        const targetServer = servers.find(server => server.id === id)
-        if (targetServer) {
-          return await queryServer(targetServer)
-        }
-      }
-
-      // 尝试按名称查找
-      const targetServer = servers.find(server =>
-        server.name.toLowerCase() === serverName.toLowerCase()
-      )
-      if (!targetServer) {
-        return `未找到"${serverName}"对应的服务器。可用服务器: ${servers.map(s => `${s.id}(${s.name})`).join(', ')}`
-      }
-      return await queryServer(targetServer)
-    }
-
-    const results = []
-    for (const server of servers) {
-      try {
-        const result = await queryServer(server)
-        results.push(result)
-      } catch (error) {
-        results.push(`❌ ${server.id} ${server.name} 查询失败: ${error.message}`)
-      }
-    }
-    return results.join('\n\n')
-  })
-
-async function queryServer(server: ServerConfig) {
-  const hostWithPort = `${server.host}:${server.port}`
-  const apiUrl = `https://api.mcsrvstat.us/2/${server.host}${server.port !== 25565 ? ':' + server.port : ''}`
   
-  try {
-    const response = await ctx.http.get(apiUrl, {
-      timeout: 5000 // 设置5秒超时
+  // 根据官方示例，参数名应该是 "signal" 而不是 "operation"
+  const body = JSON.stringify({ signal: operation })
+  
+  let lastError: Error
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await ctx.http.post(url, body, { headers })
+      ctx.logger.info(`麦块API请求成功: 实例 ${instanceId} 操作 ${operation} (第${attempt}次尝试)`)
+      return response
+    } catch (error) {
+      lastError = error
+      ctx.logger.warn(`麦块API请求失败 (第${attempt}次尝试):`, error)
+      
+      if (attempt < maxRetries) {
+        await new Promise(resolve => setTimeout(resolve, 1000 * attempt))
+      }
+    }
+  }
+  
+  throw new Error(`麦块API请求失败，已重试${maxRetries}次: ${lastError.message}`)
+}
+
+  // 新增：开服指令
+  ctx.command('开服 <id:number>', '启动麦块服务器')
+    .action(async ({ session }, id) => {
+      if (!id) {
+        return '请提供服务器ID，例如：开服 1'
+      }
+      
+      const server = config.servers.find(s => s.id === id)
+      if (!server) {
+        return `未找到ID为 ${id} 的服务器`
+      }
+      
+      if (!server.minekuaiInstanceId) {
+        return `服务器 ${server.name} 未配置麦块实例ID`
+      }
+      
+      try {
+        await minekuaiApiRequest(server.minekuaiInstanceId, 'start', 3)
+        return `✅ 已发送启动指令到服务器 ${server.name} (ID: ${id})`
+      } catch (error) {
+        return `❌ 启动服务器 ${server.name} 失败: ${error.message}`
+      }
     })
 
-    // 根据API的响应结构调整状态判断
-    if (!response.online) {
-      return `🔴 [${server.id}] ${server.name}\n🌐 IP: ${hostWithPort}\n状态: 离线`
+  // 新增：重启指令
+  ctx.command('重启 <id:number>', '重启麦块服务器')
+    .action(async ({ session }, id) => {
+      if (!id) {
+        return '请提供服务器ID，例如：重启 1'
+      }
+      
+      const server = config.servers.find(s => s.id === id)
+      if (!server) {
+        return `未找到ID为 ${id} 的服务器`
+      }
+      
+      if (!server.minekuaiInstanceId) {
+        return `服务器 ${server.name} 未配置麦块实例ID`
+      }
+      
+      try {
+        // 发送重启指令
+        await minekuaiApiRequest(server.minekuaiInstanceId, 'restart', 3)
+        
+        // 延迟1秒后发送kill指令
+        await new Promise(resolve => setTimeout(resolve, 1000))
+        await minekuaiApiRequest(server.minekuaiInstanceId, 'kill', 3)
+        
+        return `✅ 已发送重启指令到服务器 ${server.name} (ID: ${id})`
+      } catch (error) {
+        return `❌ 重启服务器 ${server.name} 失败: ${error.message}`
+      }
+    })
+
+  // 原有主指令保持不变
+  ctx.command('mcstatus [server]', '查询 Minecraft 服务器状态')
+    .alias('服务器状态', '查服')
+    .option('list', '-l 查看服务器列表')
+    .option('info', '-i <id> 查看服务器详细信息', { type: 'number' })
+    .option('timeout', '-t <seconds> 设置超时时间', { type: 'number' })
+    .option('force', '-f 强制刷新缓存')
+    .action(async ({ session, options }, server) => {
+      // 查看服务器列表
+      if (options.list) {
+        return getServerList(config.servers)
+      }
+      
+      // 查看指定ID的服务器详细信息
+      if (options.info) {
+        const server = config.servers.find(s => s.id === options.info)
+        if (!server) {
+          return `未找到ID为 ${options.info} 的服务器`
+        }
+        return getServerInfo(server, config, options.force, options.timeout || config.querySettings.defaultTimeout)
+      }
+      
+      // 无参数时显示所有服务器状态
+      if (!server) {
+        return getAllServersStatus(config, options.force, options.timeout || config.querySettings.defaultTimeout)
+      }
+      
+      // 通过名称或ID查询
+      const serverConfig = config.servers.find(s => s.name === server || s.id.toString() === server)
+      if (serverConfig) {
+        return getServerInfo(serverConfig, config, options.force, options.timeout || config.querySettings.defaultTimeout)
+      }
+      
+      // 直接通过地址查询
+      return getDirectServerStatus(server, config, options.force, options.timeout || config.querySettings.defaultTimeout)
+    })
+
+  // 辅助函数：获取服务器列表（增加麦块实例ID显示）
+  function getServerList(servers: ServerConfig[]) {
+    if (servers.length === 0) {
+      return '暂无服务器配置，请在插件配置中添加服务器。'
     }
-
-    let message = `🟢 [${server.id}] ${server.name}\n`
-    message += `🌐 IP: ${hostWithPort}\n`
-
-    // 处理MOTD - 新API中motd.clean是去除格式的MOTD数组
-    let motdText = '无'
-    if (response.motd && response.motd.clean) {
-      motdText = Array.isArray(response.motd.clean) 
-        ? response.motd.clean.join('\n')
-        : response.motd.clean
-    }
-    message += `📝 MOTD: \n${motdText}\n`
-
-    message += `🎮 版本: ${response.version || '未知'}\n`
     
-    // 处理玩家数量
-    const onlinePlayers = response.players?.online || 0
-    const maxPlayers = response.players?.max || 0
-    message += `👥 玩家: ${onlinePlayers}/${maxPlayers}\n`
+    const list = servers
+      .sort((a, b) => a.id - b.id)
+      .map(s => `#${s.id} ${s.name} - ${s.host}${s.minekuaiInstanceId ? ` [麦块实例: ${s.minekuaiInstanceId}]` : ''}`)
+      .join('\n')
+    
+    return h('message', [
+      h('p', '已配置的服务器列表:'),
+      h('p', list),
+      h('p', { style: { color: '#888', fontSize: '12px' } }, '使用"开服 ID"和"重启 ID"命令控制麦块服务器')
+    ])
+  }
 
-    // 处理在线玩家列表
-    if (onlinePlayers > 0 && response.players && response.players.list) {
-      const playerNames = response.players.list.map(player => player.name)
-      message += `🎯 在线玩家: ${playerNames.join(', ')}`
-    } else if (onlinePlayers > 0) {
-      message += '🎯 在线玩家: 有玩家在线但未获取到列表'
-    } else {
-      message += '🎯 当前没有在线玩家'
+  // 其余辅助函数保持不变
+  async function getAllServersStatus(config: Config, force: boolean, timeout: number) {
+    if (config.servers.length === 0) {
+      return '暂无服务器配置。使用 "mcstatus -l" 查看如何添加服务器。'
     }
-
+    
+    const results = await Promise.all(
+      config.servers.map(async server => {
+        try {
+          const status = await getServerStatus(server.host, timeout, config.querySettings.enableQuery, force)
+          return {
+            name: server.name,
+            online: status.online,
+            players: status.online ? `${status.players.online}/${status.players.max}` : '离线',
+            version: status.online ? status.version.name_clean : '未知',
+            motd: status.online ? status.motd.clean : ''
+          }
+        } catch (error) {
+          return {
+            name: server.name,
+            online: false,
+            players: '错误',
+            version: '未知',
+            motd: ''
+          }
+        }
+      })
+    )
+    
+    const onlineCount = results.filter(r => r.online).length
+    const message = h('message', [
+      h('p', `服务器状态监控 (${onlineCount}/${config.servers.length} 在线)`),
+      ...results.map(r => h('p', [
+        `${r.online ? '🟢' : '🔴'} ${r.name} | `,
+        h('span', { style: { color: r.online ? '#00ff00' : '#ff0000' } }, r.online ? '在线' : '离线'),
+        ` | 玩家: ${r.players} | 版本: ${r.version}`
+      ]))
+    ])
+    
     return message
-
-  } catch (error) {
-    ctx.logger('minecraft-search').warn(`查询服务器 ${server.id} ${server.name} 失败`, error)
-    throw new Error('查询服务器失败，请检查服务器地址是否正确或稍后再试。')
   }
-}
 
-// 保留格式化去除函数（虽然新API提供了clean字段，但以防万一）
-function removeFormatting(text: string): string {
-  return text.replace(/§[0-9a-fk-or]/g, '')
-}
-
-  ctx.command('mc/服务器列表')
-    .action(async ({ session }) => {
-      const { servers } = config
-
-      if (!servers || servers.length === 0) {
-        return '未配置任何Minecraft服务器'
+  async function getServerInfo(server: ServerConfig, config: Config, force: boolean, timeout: number) {
+    try {
+      const status = await getServerStatus(server.host, timeout, config.querySettings.enableQuery, force)
+      
+      if (!status.online) {
+        return h('message', [
+          h('p', `🔴 ${server.name} (${server.host})`),
+          h('p', '服务器当前处于离线状态'),
+          h('p', { style: { color: '#ff6666' } }, '无法连接到服务器，请检查地址是否正确或服务器是否正常运行。')
+        ])
       }
-
-      // 按ID排序
-      const sortedServers = [...servers].sort((a, b) => a.id - b.id)
-
-      const serverList = sortedServers.map(server =>
-        `• ${server.id}. ${server.name} - ${server.host}:${server.port}`
-      ).join('\n')
-
-      return `📋 已配置的Minecraft服务器:\n${serverList}\n\n使用"mc/查服 ID或名称"查询特定服务器`
-    })
-
-  // 麦块联机功能
-  if (config.minekuai?.apiKey) {
-    const minekuaiConfig = config.minekuai
-
-    // 定义重试函数
-    async function withRetry(fn, maxRetries = 3) {
-      let lastError;
-      for (let i = 0; i < maxRetries; i++) {
-        try {
-          return await fn();
-        } catch (error) {
-          lastError = error;
-          console.log(`操作失败，第${i + 1}次重试: ${error.message}`);
-          if (i < maxRetries - 1) {
-            // 等待一小段时间后重试
-            await new Promise(resolve => setTimeout(resolve, 500));
-          }
+      
+      const message = h('message')
+      
+      // 服务器基本信息
+      message.children.push(
+        h('p', `${config.querySettings.showIcon && status.icon ? h.image(status.icon) : ''} 🟢 ${server.name}`),
+        h('p', `📍 地址: ${server.host} (${status.ip_address || '未知IP'}:${status.port})`),
+        h('p', `🎮 版本: ${status.version.name_clean} (协议: ${status.version.protocol})`),
+        h('p', `📅 状态获取时间: ${new Date(status.retrieved_at).toLocaleString('zh-CN')}`)
+      )
+      
+      // MOTD
+      if (status.motd) {
+        const cleanMotd = status.motd.clean
+          .replace(/\n/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+        if (cleanMotd) {
+          message.children.push(
+            h('p', '📋 MOTD: ' + cleanMotd.substring(0, 100) + (cleanMotd.length > 100 ? '...' : ''))
+          )
         }
       }
-      throw lastError;
+      
+      // 玩家信息
+      if (config.querySettings.showPlayers && status.players) {
+        message.children.push(
+          h('p', `👥 在线人数: ${status.players.online}/${status.players.max}`)
+        )
+        if (status.players.list && status.players.list.length > 0) {
+          const samplePlayers = status.players.list
+            .slice(0, 5)
+            .map(p => p.name_clean)
+            .join(', ')
+          message.children.push(
+            h('p', `📊 玩家: ${samplePlayers}`)
+          )
+        }
+      }
+      
+      // 软件信息
+      if (status.software) {
+        message.children.push(
+          h('p', `💻 核心: ${status.software}`)
+        )
+      }
+      
+      // 插件信息
+      if (config.querySettings.showPlugins && status.plugins && status.plugins.length > 0) {
+        const pluginCount = status.plugins.length
+        const pluginList = status.plugins
+          .slice(0, 5)
+          .map(p => p.version ? `${p.name} v${p.version}` : p.name)
+          .join(', ')
+        message.children.push(
+          h('p', `🔌 插件 (${pluginCount}个): ${pluginList}`)
+        )
+      }
+      
+      // 模组信息
+      if (config.querySettings.showMods && status.mods && status.mods.length > 0) {
+        const modCount = status.mods.length
+        const modList = status.mods
+          .slice(0, 5)
+          .map(m => m.version ? `${m.name} v${m.version}` : m.name)
+          .join(', ')
+        message.children.push(
+          h('p', `⚙️ 模组 (${modCount}个): ${modList}`)
+        )
+      }
+      
+      // SRV记录
+      if (status.srv_record) {
+        message.children.push(
+          h('p', `🔗 SRV记录: ${status.srv_record.host}:${status.srv_record.port}`)
+        )
+      }
+      
+      // 缓存信息
+      if (status.expires_at) {
+        const cacheTime = Math.max(0, Math.floor((status.expires_at - Date.now()) / 1000))
+        message.children.push(
+          h('p', { style: { fontSize: '12px', color: '#888' } }, 
+            `⏱️ 缓存剩余: ${cacheTime}秒 | 使用 -f 强制刷新`
+          )
+        )
+      }
+      
+      return message
+    } catch (error) {
+      ctx.logger.error('MC状态查询失败:', error)
+      return h('message', [
+        h('p', `❌ 查询 ${server.name} 失败`),
+        h('p', { style: { color: '#ff6666' } }, '请检查: 1) 服务器地址是否正确 2) 服务器是否在线 3) 网络连接是否正常')
+      ])
     }
-
-    ctx.command('开服 <serverId:string>')
-      .action(async ({ session }, serverId) => {
-        if (!serverId) {
-          return '❌ 请提供服务器ID。使用"mc/服务器列表"查看可用服务器';
-        }
-
-        if (!minekuaiConfig.instances || minekuaiConfig.instances.length === 0) {
-          return '❌ 未配置任何服务器与实例的映射关系，无法执行开服操作';
-        }
-
-        try {
-          // 解析标识符（支持服务器ID）
-          const instanceId = resolveInstanceIdentifier(serverId, minekuaiConfig, config.servers);
-          const serverName = getServerName(instanceId, minekuaiConfig, config.servers);
-
-          // 使用重试功能
-          await withRetry(async () => {
-            await minekuaiRequest(ctx, minekuaiConfig, `/servers/${instanceId}/power`, 'POST', {
-              "signal": "start"
-            });
-          });
-
-          return `✅ 已发送启动指令到服务器 ${serverName} (ID: ${serverId})，服务器正在启动中，请稍后使用"mc/查服 ${serverId}"查看状态`;
-        } catch (error) {
-          return `❌ 开服失败: ${error.message}`;
-        }
-      });
-
-    ctx.command('麦块/实例电源 <identifier:string> <action:string>', { authority: 3 })
-      .action(async ({ session }, identifier, action) => {
-        if (!identifier || !action) {
-          return '❌ 请提供实例标识符/服务器ID和操作类型 (启动/关闭/重启/强制关闭)';
-        }
-
-        // 将中文操作类型映射为英文
-        const englishAction = mapActionToEnglish(action);
-
-        const validActions = ['启动', '关闭', '重启', '强制关闭'];
-        const validEnglishActions = ['start', 'stop', 'restart', 'kill'];
-
-        if (!validActions.includes(action) && !validEnglishActions.includes(englishAction)) {
-          return `❌ 无效的操作类型。可用操作: ${validActions.join(', ')}`;
-        }
-
-        try {
-          // 解析标识符（支持服务器ID或实例ID）
-          const instanceId = resolveInstanceIdentifier(identifier, minekuaiConfig, config.servers);
-          const serverName = getServerName(instanceId, minekuaiConfig, config.servers);
-
-          // 使用重试功能
-          await withRetry(async () => {
-            await minekuaiRequest(ctx, minekuaiConfig, `/servers/${instanceId}/power`, 'POST', {
-              "signal": englishAction
-            });
-          });
-
-          let message = `✅ 已发送 ${action} 指令到实例 ${serverName}`;
-          if (identifier !== instanceId) {
-            message += ` (服务器ID: ${identifier})`;
-          }
-          return message;
-        } catch (error) {
-          return `❌ 电源操作失败: ${error.message}`;
-        }
-      });
-
-    // 新增的重启指令
-    ctx.command('重启 <identifier:string>')
-      .action(async ({ session }, identifier) => {
-        if (!identifier) {
-          return '❌ 请提供实例标识符/服务器ID';
-        }
-
-        try {
-          // 解析标识符（支持服务器ID或实例ID）
-          const instanceId = resolveInstanceIdentifier(identifier, minekuaiConfig, config.servers);
-          const serverName = getServerName(instanceId, minekuaiConfig, config.servers);
-
-          console.log(`开始执行重启流程: 实例 ${serverName} (ID: ${identifier})`);
-
-          // 步骤1: 发送重启信号（带重试）
-          try {
-            await withRetry(async () => {
-              console.log(`发送重启信号到实例: ${instanceId}`);
-              await minekuaiRequest(ctx, minekuaiConfig, `/servers/${instanceId}/power`, 'POST', {
-                "signal": "restart"
-              });
-            });
-            console.log(`重启信号发送成功: ${instanceId}`);
-          } catch (error) {
-            console.log(`重启信号发送失败，继续执行强制关闭: ${error.message}`);
-          }
-
-          // 等待1秒
-          console.log('等待1秒后执行强制关闭...');
-          await new Promise(resolve => setTimeout(resolve, 1000));
-
-          // 步骤2: 发送强制关闭信号（带重试）
-          await withRetry(async () => {
-            console.log(`发送强制关闭信号到实例: ${instanceId}`);
-            await minekuaiRequest(ctx, minekuaiConfig, `/servers/${instanceId}/power`, 'POST', {
-              "signal": "kill"
-            });
-          });
-          console.log(`强制关闭信号发送成功: ${instanceId}`);
-
-          let message = `✅ 已发送重启指令到实例 ${serverName} (包含1秒后强制关闭)`;
-          if (identifier !== instanceId) {
-            message += ` (服务器ID: ${identifier})`;
-          }
-          return message;
-        } catch (error) {
-          return `❌ 重启操作失败: ${error.message}`;
-        }
-      });
-
-    // 新增：显示实例映射关系命令
-    ctx.command('麦块/实例映射', { authority: 3 })
-      .action(async ({ session }) => {
-        if (!minekuaiConfig.instances || minekuaiConfig.instances.length === 0) {
-          return '❌ 未配置任何服务器与实例的映射关系'
-        }
-
-        let message = '📋 服务器与实例映射关系:\n'
-        minekuaiConfig.instances.forEach((mapping, index) => {
-          const server = config.servers.find(s => s.id === mapping.id)
-          const serverName = server ? server.name : '未知服务器'
-          message += `\n${index + 1}. 服务器: ${serverName} (ID: ${mapping.id}) → 实例ID: ${mapping.instanceId}`
-        })
-
-        return message
-      })
-
-    // 麦块联机实例列表
-    ctx.command('麦块/实例列表', { authority: 3 })
-      .action(async ({ session }) => {
-        try {
-          const response = await minekuaiRequest(ctx, minekuaiConfig, '/')
-
-          if (!response || !response.data || response.data.length === 0) {
-            return '❌ 未找到任何麦块联机实例'
-          }
-
-          let message = '📋 麦块联机实例列表:\n'
-          response.data.forEach((instance: any, index: number) => {
-            const attrs = instance.attributes
-            const serverName = getServerName(attrs.identifier, minekuaiConfig, config.servers)
-            message += `\n${index + 1}. ${removeFormatting(attrs.name || serverName)}\n`
-            message += `   🔧 标识符: ${attrs.identifier}\n`
-            message += `   📊 节点: ${attrs.node}\n`
-            message += `   💾 内存: ${attrs.limits.memory}MB\n`
-            message += `   ⏰ 到期: ${attrs.exp_date}\n`
-          })
-
-          return message
-        } catch (error) {
-          return `❌ 获取实例列表失败: ${error.message}`
-        }
-      })
-
-    // 麦块联机实例信息
-    ctx.command('麦块/实例信息 <identifier:string>', { authority: 3 })
-      .action(async ({ session }, identifier) => {
-        if (!identifier) {
-          return '❌ 请提供实例标识符或服务器ID'
-        }
-
-        try {
-          // 解析标识符（支持服务器ID或实例ID）
-          const instanceId = resolveInstanceIdentifier(identifier, minekuaiConfig, config.servers)
-          const serverName = getServerName(instanceId, minekuaiConfig, config.servers)
-
-          const response = await minekuaiRequest(ctx, minekuaiConfig, `/servers/${instanceId}`)
-
-          if (!response || !response.attributes) {
-            return '❌ 未找到指定实例'
-          }
-
-          const attrs = response.attributes
-          const allocations = attrs.relationships?.allocations?.data || []
-          const defaultAllocation = allocations.find((alloc: any) => alloc.attributes.is_default) || allocations[0]
-
-          let message = `🖥️ 实例信息: ${removeFormatting(attrs.name || serverName)}\n`
-          message += `🔧 标识符: ${instanceId}\n`
-          if (identifier !== instanceId) {
-            message += `🔗 对应服务器ID: ${identifier}\n`
-          }
-          message += `📝 描述: ${removeFormatting(attrs.description || '无')}\n`
-          message += `🌐 节点: ${attrs.node}\n`
-          message += `📊 状态: ${attrs.is_suspended ? '已暂停' : attrs.is_installing ? '安装中' : '运行中'}\n`
-          message += `⏰ 到期时间: ${attrs.exp_date}\n`
-          message += `💾 内存: ${attrs.limits.memory}MB\n`
-          message += `⚡ CPU: ${attrs.limits.cpu}%\n`
-          message += `💿 磁盘: ${attrs.limits.disk}MB\n`
-
-          if (defaultAllocation) {
-            const allocAttrs = defaultAllocation.attributes
-            message += `🌐 连接地址: ${allocAttrs.ip_alias || allocAttrs.ip}:${allocAttrs.port}\n`
-          }
-
-          return message
-        } catch (error) {
-          return `❌ 获取实例信息失败: ${error.message}`
-        }
-      })
-
-    // 麦块联机实例资源使用情况
-    ctx.command('麦块/实例资源 <identifier:string>', { authority: 3 })
-      .action(async ({ session }, identifier) => {
-        if (!identifier) {
-          return '❌ 请提供实例标识符或服务器ID'
-        }
-
-        try {
-          // 解析标识符（支持服务器ID或实例ID）
-          const instanceId = resolveInstanceIdentifier(identifier, minekuaiConfig, config.servers)
-          const serverName = getServerName(instanceId, minekuaiConfig, config.servers)
-
-          const response = await minekuaiRequest(ctx, minekuaiConfig, `/servers/${instanceId}/resources`)
-
-          if (!response || !response.attributes) {
-            return '❌ 未找到指定实例的资源信息'
-          }
-
-          const attrs = response.attributes
-          const resources = attrs.resources
-
-          let message = `📊 实例资源使用情况: ${serverName}\n`
-          if (identifier !== instanceId) {
-            message += `🔗 对应服务器ID: ${identifier}\n`
-          }
-          message += `🔧 当前状态: ${attrs.current_state}\n`
-          message += `⏸️ 是否暂停: ${attrs.is_suspended ? '是' : '否'}\n`
-          message += `💻 CPU使用率: ${(resources.cpu_absolute || 0).toFixed(2)}%\n`
-          message += `🧠 内存使用: ${Math.round((resources.memory_bytes || 0) / 1024 / 1024)} MB\n`
-          message += `💾 磁盘使用: ${Math.round((resources.disk_bytes || 0) / 1024 / 1024)} MB\n`
-          message += `📤 网络上传: ${Math.round((resources.network_tx_bytes || 0) / 1024 / 1024)} MB\n`
-          message += `📥 网络下载: ${Math.round((resources.network_rx_bytes || 0) / 1024 / 1024)} MB\n`
-          message += `⏰ 运行时间: ${Math.round((resources.uptime || 0) / 1000)} 秒\n`
-
-          return message
-        } catch (error) {
-          return `❌ 获取资源信息失败: ${error.message}`
-        }
-      })
-
-    // 麦块联机实例发送命令
-    ctx.command('麦块/实例命令 <identifier:string> <command:text>', { authority: 3 })
-      .action(async ({ session }, identifier, command) => {
-        if (!identifier || !command) {
-          return '❌ 请提供实例标识符/服务器ID和命令内容'
-        }
-
-        try {
-          // 解析标识符（支持服务器ID或实例ID）
-          const instanceId = resolveInstanceIdentifier(identifier, minekuaiConfig, config.servers)
-          const serverName = getServerName(instanceId, minekuaiConfig, config.servers)
-
-          await minekuaiRequest(ctx, minekuaiConfig, `/servers/${instanceId}/command`, 'POST', {
-            command: command
-          })
-
-          let message = `✅ 已发送命令到实例 ${serverName}: ${command}`
-          if (identifier !== instanceId) {
-            message += ` (服务器ID: ${identifier})`
-          }
-          return message
-        } catch (error) {
-          return `❌ 发送命令失败: ${error.message}`
-        }
-      })
-
-    // 麦块联机账户信息
-    ctx.command('麦块/账户信息', { authority: 3 })
-      .action(async ({ session }) => {
-        try {
-          const response = await minekuaiRequest(ctx, minekuaiConfig, '/account')
-
-          if (!response || !response.attributes) {
-            return '❌ 获取账户信息失败'
-          }
-
-          const attrs = response.attributes
-          let message = '👤 麦块联机账户信息:\n'
-          message += `📛 用户名: ${attrs.username}\n`
-          message += `📧 邮箱: ${attrs.email}\n`
-          message += `👤 姓名: ${attrs.first_name} ${attrs.last_name}\n`
-          message += `🆔 用户ID: ${attrs.id}\n`
-          message += `🔧 管理员: ${attrs.admin ? '是' : '否'}\n`
-          message += `🌐 语言: ${attrs.language}\n`
-
-          return message
-        } catch (error) {
-          return `❌ 获取账户信息失败: ${error.message}`
-        }
-      })
   }
+
+  async function getDirectServerStatus(address: string, config: Config, force: boolean, timeout: number) {
+    try {
+      const status = await getServerStatus(address, timeout, config.querySettings.enableQuery, force)
+      
+      if (!status.online) {
+        return h('message', [
+          h('p', `🔴 ${address}`),
+          h('p', '服务器当前处于离线状态')
+        ])
+      }
+      
+      return h('message', [
+        h('p', `🟢 ${address}`),
+        h('p', `版本: ${status.version.name_clean}`),
+        h('p', `玩家: ${status.players.online}/${status.players.max}`),
+        h('p', `MOTD: ${status.motd.clean.replace(/\n/g, ' ').substring(0, 50)}...`)
+      ])
+    } catch (error) {
+      return `无法查询服务器: ${address}。请检查地址是否正确。`
+    }
+  }
+
+  // 核心函数：获取服务器状态 - 已修复URL构建问题
+  async function getServerStatus(address: string, timeout: number, enableQuery: boolean, force: boolean) {
+    // 验证地址是否有效
+    if (!address || address.trim() === '') {
+      throw new Error('服务器地址不能为空')
+    }
+    
+    const cacheKey = `mcstatus:${address}:${enableQuery}`
+    
+    // 检查缓存
+    if (!force) {
+      const cached = cache.get(cacheKey)
+      if (cached && Date.now() - cached.timestamp < config.querySettings.cacheTime * 1000) {
+        return cached.data
+      }
+    }
+    
+    // 构建URL - 已修复，使用正确的mcstatus API地址
+    const url = `https://api.mcstatus.io/v2/status/java/${encodeURIComponent(address)}`
+    const params = {
+      query: enableQuery.toString(),
+      timeout: timeout.toString()
+    }
+    
+    try {
+      // 发送请求
+      const response = await ctx.http.get(url, { params })
+      
+      // 缓存结果
+      cache.set(cacheKey, {
+        data: response,
+        timestamp: Date.now()
+      })
+      
+      return response
+    } catch (error) {
+      ctx.logger.error(`查询服务器状态失败: ${address}`, error)
+      throw new Error(`查询服务器状态失败: ${address}`)
+    }
+  }
+
+  // 定期清理缓存
+  setInterval(() => {
+    const now = Date.now()
+    for (const [key, value] of cache.entries()) {
+      if (now - value.timestamp > config.querySettings.cacheTime * 1000) {
+        cache.delete(key)
+      }
+    }
+  }, 60000)
 }
