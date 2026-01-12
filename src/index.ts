@@ -44,7 +44,7 @@ export const Config: Schema<Config> = Schema.intersect([
       { id: 2, name: 'Minecraft 官方演示', host: 'demo.mcstatus.io', minekuaiInstanceId: '' }
     ])
   }).description('服务器配置'),
-  
+
   Schema.object({
     querySettings: Schema.object({
       defaultTimeout: Schema.number().min(1).max(30).description('请求超时时间(秒)').default(5),
@@ -56,7 +56,7 @@ export const Config: Schema<Config> = Schema.intersect([
       cacheTime: Schema.number().min(0).max(3600).description('状态缓存时间(秒)').default(30)
     })
   }).description('查询设置'),
-  
+
   // 新增：麦块联机配置分类
   Schema.object({
     minekuaiSettings: Schema.object({
@@ -69,49 +69,49 @@ export const Config: Schema<Config> = Schema.intersect([
 export function apply(ctx: Context, config: Config) {
   const cache = new Map<string, { data: any, timestamp: number }>()
 
-// 修改后的麦块API请求函数
-async function minekuaiApiRequest(instanceId: string, operation: string, maxRetries = 3) {
-  const { apiUrl, apiKey } = config.minekuaiSettings
-  
-  if (!apiKey) {
-    throw new Error('麦块API密钥未配置')
-  }
-  
-  if (!apiUrl) {
-    throw new Error('麦块API地址未配置')
-  }
-  
-  // 清理API地址，确保格式正确
-  const baseUrl = apiUrl.replace(/\/+$/, '') // 移除末尾的斜杠
-  const url = `${baseUrl}/servers/${instanceId}/power`  // 修改端点格式
-  
-  const headers = {
-    'Authorization': `Bearer ${apiKey}`,
-    'Content-Type': 'application/json',
-    'Accept': 'application/json'
-  }
-  
-  // 根据官方示例，参数名应该是 "signal" 而不是 "operation"
-  const body = JSON.stringify({ signal: operation })
-  
-  let lastError: Error
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      const response = await ctx.http.post(url, body, { headers })
-      ctx.logger.info(`麦块API请求成功: 实例 ${instanceId} 操作 ${operation} (第${attempt}次尝试)`)
-      return response
-    } catch (error) {
-      lastError = error
-      ctx.logger.warn(`麦块API请求失败 (第${attempt}次尝试):`, error)
-      
-      if (attempt < maxRetries) {
-        await new Promise(resolve => setTimeout(resolve, 1000 * attempt))
+  // 修改后的麦块API请求函数
+  async function minekuaiApiRequest(instanceId: string, operation: string, maxRetries = 3) {
+    const { apiUrl, apiKey } = config.minekuaiSettings
+
+    if (!apiKey) {
+      throw new Error('麦块API密钥未配置')
+    }
+
+    if (!apiUrl) {
+      throw new Error('麦块API地址未配置')
+    }
+
+    // 清理API地址，确保格式正确
+    const baseUrl = apiUrl.replace(/\/+$/, '') // 移除末尾的斜杠
+    const url = `${baseUrl}/servers/${instanceId}/power`  // 修改端点格式
+
+    const headers = {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json'
+    }
+
+    // 根据官方示例，参数名应该是 "signal" 而不是 "operation"
+    const body = JSON.stringify({ signal: operation })
+
+    let lastError: Error
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const response = await ctx.http.post(url, body, { headers })
+        ctx.logger.info(`麦块API请求成功: 实例 ${instanceId} 操作 ${operation} (第${attempt}次尝试)`)
+        return response
+      } catch (error) {
+        lastError = error
+        ctx.logger.warn(`麦块API请求失败 (第${attempt}次尝试):`, error)
+
+        if (attempt < maxRetries) {
+          await new Promise(resolve => setTimeout(resolve, 1000 * attempt))
+        }
       }
     }
+
+    throw new Error(`麦块API请求失败，已重试${maxRetries}次: ${lastError.message}`)
   }
-  
-  throw new Error(`麦块API请求失败，已重试${maxRetries}次: ${lastError.message}`)
-}
 
   // 新增：开服指令
   ctx.command('开服 <id:number>', '启动麦块服务器')
@@ -119,16 +119,16 @@ async function minekuaiApiRequest(instanceId: string, operation: string, maxRetr
       if (!id) {
         return '请提供服务器ID，例如：开服 1'
       }
-      
+
       const server = config.servers.find(s => s.id === id)
       if (!server) {
         return `未找到ID为 ${id} 的服务器`
       }
-      
+
       if (!server.minekuaiInstanceId) {
         return `服务器 ${server.name} 未配置麦块实例ID`
       }
-      
+
       try {
         await minekuaiApiRequest(server.minekuaiInstanceId, 'start', 3)
         return `✅ 已发送启动指令到服务器 ${server.name} (ID: ${id})`
@@ -143,24 +143,24 @@ async function minekuaiApiRequest(instanceId: string, operation: string, maxRetr
       if (!id) {
         return '请提供服务器ID，例如：重启 1'
       }
-      
+
       const server = config.servers.find(s => s.id === id)
       if (!server) {
         return `未找到ID为 ${id} 的服务器`
       }
-      
+
       if (!server.minekuaiInstanceId) {
         return `服务器 ${server.name} 未配置麦块实例ID`
       }
-      
+
       try {
         // 发送重启指令
         await minekuaiApiRequest(server.minekuaiInstanceId, 'restart', 3)
-        
+
         // 延迟1秒后发送kill指令
         await new Promise(resolve => setTimeout(resolve, 1000))
         await minekuaiApiRequest(server.minekuaiInstanceId, 'kill', 3)
-        
+
         return `✅ 已发送重启指令到服务器 ${server.name} (ID: ${id})`
       } catch (error) {
         return `❌ 重启服务器 ${server.name} 失败: ${error.message}`
@@ -179,7 +179,7 @@ async function minekuaiApiRequest(instanceId: string, operation: string, maxRetr
       if (options.list) {
         return getServerList(config.servers)
       }
-      
+
       // 查看指定ID的服务器详细信息
       if (options.info) {
         const server = config.servers.find(s => s.id === options.info)
@@ -188,18 +188,18 @@ async function minekuaiApiRequest(instanceId: string, operation: string, maxRetr
         }
         return getServerInfo(server, config, options.force, options.timeout || config.querySettings.defaultTimeout)
       }
-      
+
       // 无参数时显示所有服务器状态
       if (!server) {
         return getAllServersStatus(config, options.force, options.timeout || config.querySettings.defaultTimeout)
       }
-      
+
       // 通过名称或ID查询
       const serverConfig = config.servers.find(s => s.name === server || s.id.toString() === server)
       if (serverConfig) {
         return getServerInfo(serverConfig, config, options.force, options.timeout || config.querySettings.defaultTimeout)
       }
-      
+
       // 直接通过地址查询
       return getDirectServerStatus(server, config, options.force, options.timeout || config.querySettings.defaultTimeout)
     })
@@ -209,12 +209,12 @@ async function minekuaiApiRequest(instanceId: string, operation: string, maxRetr
     if (servers.length === 0) {
       return '暂无服务器配置，请在插件配置中添加服务器。'
     }
-    
+
     const list = servers
       .sort((a, b) => a.id - b.id)
       .map(s => `#${s.id} ${s.name} - ${s.host}${s.minekuaiInstanceId ? ` [麦块实例: ${s.minekuaiInstanceId}]` : ''}`)
       .join('\n')
-    
+
     return h('message', [
       h('p', '已配置的服务器列表:'),
       h('p', list),
@@ -227,7 +227,7 @@ async function minekuaiApiRequest(instanceId: string, operation: string, maxRetr
     if (config.servers.length === 0) {
       return '暂无服务器配置。使用 "mcstatus -l" 查看如何添加服务器。'
     }
-    
+
     const results = await Promise.all(
       config.servers.map(async server => {
         try {
@@ -250,7 +250,7 @@ async function minekuaiApiRequest(instanceId: string, operation: string, maxRetr
         }
       })
     )
-    
+
     const onlineCount = results.filter(r => r.online).length
     const message = h('message', [
       h('p', `服务器状态监控 (${onlineCount}/${config.servers.length} 在线)`),
@@ -260,14 +260,14 @@ async function minekuaiApiRequest(instanceId: string, operation: string, maxRetr
         ` | 玩家: ${r.players} | 版本: ${r.version}`
       ]))
     ])
-    
+
     return message
   }
 
   async function getServerInfo(server: ServerConfig, config: Config, force: boolean, timeout: number) {
     try {
       const status = await getServerStatus(server.host, timeout, config.querySettings.enableQuery, force)
-      
+
       if (!status.online) {
         return h('message', [
           h('p', `🔴 ${server.name} (${server.host})`),
@@ -275,17 +275,41 @@ async function minekuaiApiRequest(instanceId: string, operation: string, maxRetr
           h('p', { style: { color: '#ff6666' } }, '无法连接到服务器，请检查地址是否正确或服务器是否正常运行。')
         ])
       }
-      
+
       const message = h('message')
-      
-      // 服务器基本信息
-      message.children.push(
-        h('p', `${config.querySettings.showIcon && status.icon ? h.image(status.icon) : ''} 🟢 ${server.name}`),
-        h('p', `📍 地址: ${server.host}`),
-        h('p', `🎮 版本: ${status.version.name_clean} (协议: ${status.version.protocol})`),
-        h('p', `📅 状态获取时间: ${new Date(status.retrieved_at).toLocaleString('zh-CN')}`)
-      )
-      
+
+    // 处理服务器图标
+    let iconElement = null
+    if (config.querySettings.showIcon && status.icon) {
+      try {
+        // mcstatus API 返回的 icon 已经是 data:image/png;base64,... 格式
+        // 直接使用 h.image 应该能处理，但需要确保格式正确
+        if (status.icon.startsWith('data:image/')) {
+          iconElement = h.image(status.icon)
+        } else if (status.icon.startsWith('http')) {
+          // 如果是 URL，直接使用
+          iconElement = h.image(status.icon)
+        } else {
+          // 如果是纯 Base64，添加前缀
+          iconElement = h.image(`base64://${status.icon}`)
+        }
+      } catch (error) {
+        ctx.logger.warn('处理服务器图标失败:', error)
+        // 图标处理失败，不显示图标
+      }
+    }
+    
+    // 服务器基本信息
+    message.children.push(
+      h('p', [
+        iconElement ? h('span', [iconElement, ' ']) : '',
+        `🟢 ${server.name}`
+      ]),
+      h('p', `📍 地址: ${server.host}`),
+      h('p', `🎮 版本: ${status.version.name_clean} (协议: ${status.version.protocol})`),
+      h('p', `📅 状态获取时间: ${new Date(status.retrieved_at).toLocaleString('zh-CN')}`)
+    )
+
       // MOTD
       if (status.motd) {
         const cleanMotd = status.motd.clean
@@ -298,7 +322,7 @@ async function minekuaiApiRequest(instanceId: string, operation: string, maxRetr
           )
         }
       }
-      
+
       // 玩家信息
       if (config.querySettings.showPlayers && status.players) {
         message.children.push(
@@ -314,14 +338,14 @@ async function minekuaiApiRequest(instanceId: string, operation: string, maxRetr
           )
         }
       }
-      
+
       // 软件信息
       if (status.software) {
         message.children.push(
           h('p', `💻 核心: ${status.software}`)
         )
       }
-      
+
       // 插件信息
       if (config.querySettings.showPlugins && status.plugins && status.plugins.length > 0) {
         const pluginCount = status.plugins.length
@@ -333,7 +357,7 @@ async function minekuaiApiRequest(instanceId: string, operation: string, maxRetr
           h('p', `🔌 插件 (${pluginCount}个): ${pluginList}`)
         )
       }
-      
+
       // 模组信息
       if (config.querySettings.showMods && status.mods && status.mods.length > 0) {
         const modCount = status.mods.length
@@ -345,24 +369,24 @@ async function minekuaiApiRequest(instanceId: string, operation: string, maxRetr
           h('p', `⚙️ 模组 (${modCount}个): ${modList}`)
         )
       }
-      
+
       // SRV记录
       if (status.srv_record) {
         message.children.push(
           h('p', `🔗 SRV记录: ${status.srv_record.host}:${status.srv_record.port}`)
         )
       }
-      
+
       // 缓存信息
       if (status.expires_at) {
         const cacheTime = Math.max(0, Math.floor((status.expires_at - Date.now()) / 1000))
         message.children.push(
-          h('p', { style: { fontSize: '12px', color: '#888' } }, 
+          h('p', { style: { fontSize: '12px', color: '#888' } },
             `⏱️ 缓存剩余: ${cacheTime}秒 | 使用 -f 强制刷新`
           )
         )
       }
-      
+
       return message
     } catch (error) {
       ctx.logger.error('MC状态查询失败:', error)
@@ -376,14 +400,14 @@ async function minekuaiApiRequest(instanceId: string, operation: string, maxRetr
   async function getDirectServerStatus(address: string, config: Config, force: boolean, timeout: number) {
     try {
       const status = await getServerStatus(address, timeout, config.querySettings.enableQuery, force)
-      
+
       if (!status.online) {
         return h('message', [
           h('p', `🔴 ${address}`),
           h('p', '服务器当前处于离线状态')
         ])
       }
-      
+
       return h('message', [
         h('p', `🟢 ${address}`),
         h('p', `版本: ${status.version.name_clean}`),
@@ -401,9 +425,9 @@ async function minekuaiApiRequest(instanceId: string, operation: string, maxRetr
     if (!address || address.trim() === '') {
       throw new Error('服务器地址不能为空')
     }
-    
+
     const cacheKey = `mcstatus:${address}:${enableQuery}`
-    
+
     // 检查缓存
     if (!force) {
       const cached = cache.get(cacheKey)
@@ -411,24 +435,24 @@ async function minekuaiApiRequest(instanceId: string, operation: string, maxRetr
         return cached.data
       }
     }
-    
+
     // 构建URL - 已修复，使用正确的mcstatus API地址
     const url = `https://api.mcstatus.io/v2/status/java/${encodeURIComponent(address)}`
     const params = {
       query: enableQuery.toString(),
       timeout: timeout.toString()
     }
-    
+
     try {
       // 发送请求
       const response = await ctx.http.get(url, { params })
-      
+
       // 缓存结果
       cache.set(cacheKey, {
         data: response,
         timestamp: Date.now()
       })
-      
+
       return response
     } catch (error) {
       ctx.logger.error(`查询服务器状态失败: ${address}`, error)
