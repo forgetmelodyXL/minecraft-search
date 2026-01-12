@@ -281,7 +281,7 @@ async function minekuaiApiRequest(instanceId: string, operation: string, maxRetr
       // 服务器基本信息
       message.children.push(
         h('p', `${config.querySettings.showIcon && status.icon ? h.image(status.icon) : ''} 🟢 ${server.name}`),
-        h('p', `📍 地址: ${server.host} (${status.ip_address || '未知IP'}:${status.port})`),
+        h('p', `📍 地址: ${server.host}`),
         h('p', `🎮 版本: ${status.version.name_clean} (协议: ${status.version.protocol})`),
         h('p', `📅 状态获取时间: ${new Date(status.retrieved_at).toLocaleString('zh-CN')}`)
       )
