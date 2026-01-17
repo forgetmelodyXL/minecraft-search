@@ -419,33 +419,42 @@ export function apply(ctx: Context, config: Config) {
     }
   }
 
-  // 核心函数：获取服务器状态 - 已修复URL构建问题
-  async function getServerStatus(address: string, timeout: number, enableQuery: boolean, force: boolean) {
-    // 验证地址是否有效
-    if (!address || address.trim() === '') {
-      throw new Error('服务器地址不能为空')
+// 核心函数：获取服务器状态 - 已修复URL构建问题和重试机制
+async function getServerStatus(address: string, timeout: number, enableQuery: boolean, force: boolean) {
+  // 验证地址是否有效
+  if (!address || address.trim() === '') {
+    throw new Error('服务器地址不能为空')
+  }
+
+  const cacheKey = `mcstatus:${address}:${enableQuery}`
+
+  // 检查缓存
+  if (!force) {
+    const cached = cache.get(cacheKey)
+    if (cached && Date.now() - cached.timestamp < config.querySettings.cacheTime * 1000) {
+      return cached.data
     }
+  }
 
-    const cacheKey = `mcstatus:${address}:${enableQuery}`
+  // 构建URL
+  const url = `https://api.mcstatus.io/v2/status/java/${encodeURIComponent(address)}`
+  const params = {
+    query: enableQuery.toString(),
+    timeout: timeout.toString()  // 这是API参数，需要字符串类型
+  }
 
-    // 检查缓存
-    if (!force) {
-      const cached = cache.get(cacheKey)
-      if (cached && Date.now() - cached.timestamp < config.querySettings.cacheTime * 1000) {
-        return cached.data
-      }
-    }
+  const maxRetries = 3
+  let lastError: Error
+  let retryDelay = 1000 // 初始重试延迟1秒
 
-    // 构建URL - 已修复，使用正确的mcstatus API地址
-    const url = `https://api.mcstatus.io/v2/status/java/${encodeURIComponent(address)}`
-    const params = {
-      query: enableQuery.toString(),
-      timeout: timeout.toString()
-    }
-
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       // 发送请求
-      const response = await ctx.http.get(url, { params })
+      // 注意：这里第一个timeout是API参数（秒），第二个timeout是请求超时（毫秒）
+      const response = await ctx.http.get(url, { 
+        params, 
+        timeout: timeout * 1000 + 5000  // 请求超时 = API超时 + 5秒缓冲
+      })
 
       // 缓存结果
       cache.set(cacheKey, {
@@ -453,12 +462,25 @@ export function apply(ctx: Context, config: Config) {
         timestamp: Date.now()
       })
 
+      ctx.logger.debug(`MC状态查询成功: ${address} (第${attempt}次尝试)`)
       return response
     } catch (error) {
-      ctx.logger.error(`查询服务器状态失败: ${address}`, error)
-      throw new Error(`查询服务器状态失败: ${address}`)
+      lastError = error
+      ctx.logger.warn(`MC状态查询失败 (第${attempt}次尝试): ${address}`, error.message)
+
+      // 如果不是最后一次尝试，等待后重试
+      if (attempt < maxRetries) {
+        const delay = retryDelay * attempt // 指数退避：1秒, 2秒, 4秒
+        ctx.logger.debug(`将在 ${delay}ms 后重试查询 ${address}`)
+        await new Promise(resolve => setTimeout(resolve, delay))
+      }
     }
   }
+
+  // 所有重试都失败
+  ctx.logger.error(`查询服务器状态失败，已重试 ${maxRetries} 次: ${address}`, lastError)
+  throw new Error(`查询服务器状态失败: ${address} (${lastError.message})`)
+}
 
   // 定期清理缓存
   setInterval(() => {
