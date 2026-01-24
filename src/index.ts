@@ -13,7 +13,6 @@ export interface ServerConfig {
 export interface Config {
   servers: ServerConfig[]
   minekuaiSettings: MinekuaiSettings // 新增：麦块联机配置
-  cacheDuration: number // 新增：缓存时间（毫秒）
 }
 
 // 新增：麦块联机配置接口
@@ -29,8 +28,7 @@ export const Config: Schema<Config> = Schema.intersect([
       name: Schema.string().required().description('服务器名称'),
       host: Schema.string().required().description('服务器地址 (如: play.example.com)'),
       minekuaiInstanceId: Schema.string().description('麦块实例ID (用于电源控制)')
-    })).description('服务器列表').role('table').required(),
-    cacheDuration: Schema.number().default(300000).description('缓存时间（毫秒，默认5分钟）')
+    })).description('服务器列表').role('table').required()
   }).description('服务器配置'),
   
   // 新增：麦块联机配置分类
@@ -73,7 +71,8 @@ interface MOTDResponse {
 }
 
 export function apply(ctx: Context, config: Config) {
-  const cache = new Map<string, { data: any, timestamp: number }>()
+  // 删除：缓存相关代码
+  // 删除：const cache = new Map<string, { data: any, timestamp: number }>()
 
   // 修改后的麦块API请求函数
   async function minekuaiApiRequest(instanceId: string, operation: string, maxRetries = 3) {
@@ -111,25 +110,15 @@ export function apply(ctx: Context, config: Config) {
     throw new Error(`麦块API请求失败，已重试${maxRetries}次: ${lastError.message}`)
   }
 
-  // MOTD API查询函数
+  // MOTD API查询函数（删除缓存逻辑）
   async function queryMOTD(host: string, port?: number) {
-    const cacheKey = `${host}:${port || 'default'}`
-    const now = Date.now()
-    
-    // 检查缓存
-    const cached = cache.get(cacheKey)
-    if (cached && now - cached.timestamp < config.cacheDuration) {
-      return cached.data
-    }
-
     const params: any = { ip: host }
     if (port) params.port = port
     
     try {
       const response = await ctx.http.get<MOTDResponse>('https://motd.minebbs.com/api/status', { params })
       
-      // 缓存结果
-      cache.set(cacheKey, { data: response, timestamp: now })
+      // 删除：缓存逻辑
       
       return response
     } catch (error) {
@@ -153,13 +142,22 @@ export function apply(ctx: Context, config: Config) {
       return motdData.pureMotd.replace(/\n/g, ' ').trim()
     }
     
-    // 如果pureMotd不存在，回退到原始MOTD处理
-    if (!motdData.motd.extra || motdData.motd.extra.length === 0) {
-      return motdData.motd.text || '无描述信息'
+    // 如果pureMotd不存在，检查motd对象是否存在
+    if (motdData.motd) {
+      // 如果motd.extra存在且是数组，则处理extra
+      if (motdData.motd.extra && Array.isArray(motdData.motd.extra)) {
+        const text = motdData.motd.extra.map(item => item.text).join('')
+        return text.replace(/\n/g, ' ').trim()
+      }
+      
+      // 如果只有motd.text，使用它
+      if (motdData.motd.text) {
+        return motdData.motd.text.replace(/\n/g, ' ').trim()
+      }
     }
     
-    const text = motdData.motd.extra.map(item => item.text).join('')
-    return text.replace(/\n/g, ' ').trim()
+    // 如果都没有，返回默认文本
+    return '无描述信息'
   }
 
   // 生成简洁状态消息（单行）
@@ -200,19 +198,24 @@ export function apply(ctx: Context, config: Config) {
       `📝 名称: ${server.name}`,
       `🌐 地址: ${server.host}`,
       `📊 状态: ${statusIcon} ${statusText}`,
-      `🎮 类型: ${motd.type}`,
+      `🎮 类型: ${motd.type || '未知'}`,
       `🔧 版本: ${motd.version || '未知'}`,
-      `👥 在线人数：${motd.status === 'online' ? `${motd.players.online}/${motd.players.max}` : '离线'}`,
+      `👥 在线人数：${motd.status === 'online' ? `${motd.players?.online || 0}/${motd.players?.max || 0}` : '离线'}`,
     ]
 
     // 总是显示在线玩家列表，即使无玩家或为Anonymous Player
     if (motd.status === 'online') {
-      // 如果玩家样本为空或为"无"，显示"无玩家"
-      if (!motd.players.sample || motd.players.sample === '无') {
-        fields.push(`👤 在线玩家：无玩家`)
+      // 检查 players 对象是否存在
+      if (motd.players) {
+        // 如果玩家样本为空或为"无"，显示"无玩家"
+        if (!motd.players.sample || motd.players.sample === '无') {
+          fields.push(`👤 在线玩家：无玩家`)
+        } else {
+          // 正常显示玩家列表，包括Anonymous Player
+          fields.push(`👤 在线玩家：${motd.players.sample}`)
+        }
       } else {
-        // 正常显示玩家列表，包括Anonymous Player
-        fields.push(`👤 在线玩家：${motd.players.sample}`)
+        fields.push(`👤 在线玩家：未知`)
       }
     }
 
@@ -220,7 +223,7 @@ export function apply(ctx: Context, config: Config) {
     fields.push(`📋 描述: ${formatMotd(motd)}`)
     
     // 延迟信息
-    fields.push(`⏱️ 延迟: ${motd.delay}ms`)
+    fields.push(`⏱️ 延迟: ${motd.delay || '未知'}ms`)
 
     return fields.join('\n')
   }
@@ -307,10 +310,7 @@ export function apply(ctx: Context, config: Config) {
           return `未找到ID为 ${id} 的服务器`
         }
         
-        if (options.refresh) {
-          const cacheKey = `${server.host}`
-          cache.delete(cacheKey)
-        }
+        // 删除：缓存刷新逻辑
         
         try {
           const { host, port } = parseHost(server.host)
@@ -332,13 +332,5 @@ export function apply(ctx: Context, config: Config) {
       }
     })
 
-  // 定时清理过期缓存
-  setInterval(() => {
-    const now = Date.now()
-    for (const [key, value] of cache.entries()) {
-      if (now - value.timestamp > config.cacheDuration) {
-        cache.delete(key)
-      }
-    }
-  }, 60000) // 每分钟清理一次
+  // 删除：定时清理过期缓存的代码
 }
