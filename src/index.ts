@@ -14,6 +14,7 @@ export interface Config {
   servers: ServerConfig[]
   querySettings: QuerySettings
   minekuaiSettings: MinekuaiSettings  // 新增：麦块联机配置
+  apiSettings: ApiSettings // 新增：API配置
 }
 
 export interface QuerySettings {
@@ -32,7 +33,34 @@ export interface MinekuaiSettings {
   apiKey: string
 }
 
+// 新增：API配置接口
+export interface ApiSettings {
+  apiProvider: 'mcstatus' | 'lazy' // API提供商：mcstatus.io 或 Lazy API
+  lazyApiUrl: string // Lazy API地址
+  useBackup: boolean // 是否使用备用地址
+  returnType: 'json' | 'image' | 'html' // 返回类型
+  autoDetectBedrock: boolean // 自动检测基岩版
+}
+
 export const Config: Schema<Config> = Schema.intersect([
+  // 新增：API配置分类
+  Schema.object({
+    apiSettings: Schema.object({
+      apiProvider: Schema.union([
+        Schema.const('mcstatus' as const).description('mcstatus.io API (默认)'),
+        Schema.const('lazy' as const).description('Lazy Minecraft API')
+      ]).description('API提供商选择').default('mcstatus'),
+      lazyApiUrl: Schema.string().description('Lazy API地址').default('https://api.imlazy.ink/mcapi'),
+      useBackup: Schema.boolean().description('使用备用API地址').default(false),
+      returnType: Schema.union([
+        Schema.const('json' as const).description('JSON格式'),
+        Schema.const('image' as const).description('图片格式'),
+        Schema.const('html' as const).description('网页格式')
+      ]).description('返回类型 (仅Lazy API)').default('json'),
+      autoDetectBedrock: Schema.boolean().description('自动检测基岩版服务器').default(true)
+    })
+  }).description('API设置'),
+
   Schema.object({
     servers: Schema.array(Schema.object({
       id: Schema.number().required().description('服务器ID (数字)'),
@@ -174,35 +202,59 @@ export function apply(ctx: Context, config: Config) {
     .option('info', '-i <id> 查看服务器详细信息', { type: 'number' })
     .option('timeout', '-t <seconds> 设置超时时间', { type: 'number' })
     .option('force', '-f 强制刷新缓存')
+    .option('api', '-a <provider> 临时切换API提供商', { type: 'string' })
     .action(async ({ session, options }, server) => {
-      // 查看服务器列表
-      if (options.list) {
-        return getServerList(config.servers)
-      }
-
-      // 查看指定ID的服务器详细信息
-      if (options.info) {
-        const server = config.servers.find(s => s.id === options.info)
-        if (!server) {
-          return `未找到ID为 ${options.info} 的服务器`
+      // 临时API切换
+      if (options.api) {
+        const tempProvider = options.api.toLowerCase()
+        if (['mcstatus', 'lazy'].includes(tempProvider)) {
+          const originalProvider = config.apiSettings.apiProvider
+          config.apiSettings.apiProvider = tempProvider as 'mcstatus' | 'lazy'
+          // 执行查询后恢复原设置
+          try {
+            const result = await handleMcStatusCommand(server, options)
+            return result
+          } finally {
+            config.apiSettings.apiProvider = originalProvider
+          }
+        } else {
+          return '❌ 无效的API提供商，可选: mcstatus, lazy'
         }
-        return getServerInfo(server, config, options.force, options.timeout || config.querySettings.defaultTimeout)
       }
 
-      // 无参数时显示所有服务器状态
-      if (!server) {
-        return getAllServersStatus(config, options.force, options.timeout || config.querySettings.defaultTimeout)
-      }
-
-      // 通过名称或ID查询
-      const serverConfig = config.servers.find(s => s.name === server || s.id.toString() === server)
-      if (serverConfig) {
-        return getServerInfo(serverConfig, config, options.force, options.timeout || config.querySettings.defaultTimeout)
-      }
-
-      // 直接通过地址查询
-      return getDirectServerStatus(server, config, options.force, options.timeout || config.querySettings.defaultTimeout)
+      return await handleMcStatusCommand(server, options)
     })
+
+  // 新增：提取原来的命令处理逻辑
+  async function handleMcStatusCommand(server: string, options: any) {
+    // 查看服务器列表
+    if (options.list) {
+      return getServerList(config.servers)
+    }
+
+    // 查看指定ID的服务器详细信息
+    if (options.info) {
+      const server = config.servers.find(s => s.id === options.info)
+      if (!server) {
+        return `未找到ID为 ${options.info} 的服务器`
+      }
+      return getServerInfo(server, config, options.force, options.timeout || config.querySettings.defaultTimeout)
+    }
+
+    // 无参数时显示所有服务器状态
+    if (!server) {
+      return getAllServersStatus(config, options.force, options.timeout || config.querySettings.defaultTimeout)
+    }
+
+    // 通过名称或ID查询
+    const serverConfig = config.servers.find(s => s.name === server || s.id.toString() === server)
+    if (serverConfig) {
+      return getServerInfo(serverConfig, config, options.force, options.timeout || config.querySettings.defaultTimeout)
+    }
+
+    // 直接通过地址查询
+    return getDirectServerStatus(server, config, options.force, options.timeout || config.querySettings.defaultTimeout)
+  }
 
   // 辅助函数：获取服务器列表（增加麦块实例ID显示）
   function getServerList(servers: ServerConfig[]) {
@@ -264,38 +316,34 @@ export function apply(ctx: Context, config: Config) {
     return message
   }
 
-  async function getServerInfo(server: ServerConfig, config: Config, force: boolean, timeout: number) {
-    try {
-      const status = await getServerStatus(server.host, timeout, config.querySettings.enableQuery, force)
+// 修改 getServerInfo 函数中的版本显示部分
+async function getServerInfo(server: ServerConfig, config: Config, force: boolean, timeout: number) {
+  try {
+    const status = await getServerStatus(server.host, timeout, config.querySettings.enableQuery, force)
 
-      if (!status.online) {
-        return h('message', [
-          h('p', `🔴 ${server.name} (${server.host})`),
-          h('p', '服务器当前处于离线状态'),
-          h('p', { style: { color: '#ff6666' } }, '无法连接到服务器，请检查地址是否正确或服务器是否正常运行。')
-        ])
-      }
+    if (!status.online) {
+      return h('message', [
+        h('p', `🔴 ${server.name} (${server.host})`),
+        h('p', '服务器当前处于离线状态'),
+        h('p', { style: { color: '#ff6666' } }, '无法连接到服务器，请检查地址是否正确或服务器是否正常运行。')
+      ])
+    }
 
-      const message = h('message')
+    const message = h('message')
 
     // 处理服务器图标
     let iconElement = null
     if (config.querySettings.showIcon && status.icon) {
       try {
-        // mcstatus API 返回的 icon 已经是 data:image/png;base64,... 格式
-        // 直接使用 h.image 应该能处理，但需要确保格式正确
         if (status.icon.startsWith('data:image/')) {
           iconElement = h.image(status.icon)
         } else if (status.icon.startsWith('http')) {
-          // 如果是 URL，直接使用
           iconElement = h.image(status.icon)
         } else {
-          // 如果是纯 Base64，添加前缀
           iconElement = h.image(`base64://${status.icon}`)
         }
       } catch (error) {
         ctx.logger.warn('处理服务器图标失败:', error)
-        // 图标处理失败，不显示图标
       }
     }
     
@@ -305,97 +353,101 @@ export function apply(ctx: Context, config: Config) {
         iconElement ? h('span', [iconElement, ' ']) : '',
         `🟢 ${server.name}`
       ]),
-      h('p', `📍 地址: ${server.host}`),
-      h('p', `🎮 版本: ${status.version.name_clean} (协议: ${status.version.protocol})`),
+      h('p', `📍 地址: ${server.host}`)
+    )
+
+    // 版本信息显示优化
+    let versionDisplay = `🎮 版本: ${status.version.name_clean}`
+    if (status.version.protocol && status.version.protocol !== 0) {
+      versionDisplay += ` (协议: ${status.version.protocol})`
+    }
+    message.children.push(h('p', versionDisplay))
+
+    message.children.push(
       h('p', `📅 状态获取时间: ${new Date(status.retrieved_at).toLocaleString('zh-CN')}`)
     )
 
-      // MOTD
-      if (status.motd) {
-        const cleanMotd = status.motd.clean
-          .replace(/\n/g, ' ')
-          .replace(/\s+/g, ' ')
-          .trim()
-        if (cleanMotd) {
-          message.children.push(
-            h('p', '📋 MOTD: ' + cleanMotd.substring(0, 100) + (cleanMotd.length > 100 ? '...' : ''))
-          )
-        }
-      }
-
-      // 玩家信息
-      if (config.querySettings.showPlayers && status.players) {
+    // MOTD 处理（去除颜色代码）
+    if (status.motd) {
+      let cleanMotd = status.motd.clean
+        .replace(/\n/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .replace(/§./g, '') // 去除颜色代码
+      
+      if (cleanMotd) {
         message.children.push(
-          h('p', `👥 在线人数: ${status.players.online}/${status.players.max}`)
-        )
-        if (status.players.list && status.players.list.length > 0) {
-          const samplePlayers = status.players.list
-            .slice(0, 5)
-            .map(p => p.name_clean)
-            .join(', ')
-          message.children.push(
-            h('p', `📊 玩家: ${samplePlayers}`)
-          )
-        }
-      }
-
-      // 软件信息
-      if (status.software) {
-        message.children.push(
-          h('p', `💻 核心: ${status.software}`)
+          h('p', '📋 MOTD: ' + cleanMotd.substring(0, 100) + (cleanMotd.length > 100 ? '...' : ''))
         )
       }
-
-      // 插件信息
-      if (config.querySettings.showPlugins && status.plugins && status.plugins.length > 0) {
-        const pluginCount = status.plugins.length
-        const pluginList = status.plugins
-          .slice(0, 5)
-          .map(p => p.version ? `${p.name} v${p.version}` : p.name)
-          .join(', ')
-        message.children.push(
-          h('p', `🔌 插件 (${pluginCount}个): ${pluginList}`)
-        )
-      }
-
-      // 模组信息
-      if (config.querySettings.showMods && status.mods && status.mods.length > 0) {
-        const modCount = status.mods.length
-        const modList = status.mods
-          .slice(0, 5)
-          .map(m => m.version ? `${m.name} v${m.version}` : m.name)
-          .join(', ')
-        message.children.push(
-          h('p', `⚙️ 模组 (${modCount}个): ${modList}`)
-        )
-      }
-
-      // SRV记录
-      if (status.srv_record) {
-        message.children.push(
-          h('p', `🔗 SRV记录: ${status.srv_record.host}:${status.srv_record.port}`)
-        )
-      }
-
-      // 缓存信息
-      if (status.expires_at) {
-        const cacheTime = Math.max(0, Math.floor((status.expires_at - Date.now()) / 1000))
-        message.children.push(
-          h('p', { style: { fontSize: '12px', color: '#888' } },
-            `⏱️ 缓存剩余: ${cacheTime}秒 | 使用 -f 强制刷新`
-          )
-        )
-      }
-
-      return message
-    } catch (error) {
-      ctx.logger.error('MC状态查询失败:', error)
-      return h('message', [
-        h('p', `❌ 查询 ${server.name} 失败`),
-        h('p', { style: { color: '#ff6666' } }, '请检查: 1) 服务器地址是否正确 2) 服务器是否在线 3) 网络连接是否正常')
-      ])
     }
+
+    // 玩家信息
+    if (config.querySettings.showPlayers && status.players) {
+      message.children.push(
+        h('p', `👥 在线人数: ${status.players.online}/${status.players.max}`)
+      )
+      if (status.players.list && status.players.list.length > 0) {
+        const samplePlayers = status.players.list
+          .slice(0, 5)
+          .map(p => p.name_clean)
+          .join(', ')
+        message.children.push(
+          h('p', `📊 玩家: ${samplePlayers}`)
+        )
+      }
+    }
+
+    // 移除核心信息显示（根据用户要求）
+    // if (status.software) {
+    //   message.children.push(
+    //     h('p', `💻 核心: ${status.software}`)
+    //   )
+    // }
+
+    // 插件信息
+    if (config.querySettings.showPlugins && status.plugins && status.plugins.length > 0) {
+      const pluginCount = status.plugins.length
+      const pluginList = status.plugins
+        .slice(0, 5)
+        .map(p => p.version ? `${p.name} v${p.version}` : p.name)
+        .join(', ')
+      message.children.push(
+        h('p', `🔌 插件 (${pluginCount}个): ${pluginList}`)
+      )
+    }
+
+    // 模组信息
+    if (config.querySettings.showMods && status.mods && status.mods.length > 0) {
+      const modCount = status.mods.length
+      const modList = status.mods
+        .slice(0, 5)
+        .map(m => m.version ? `${m.name} v${m.version}` : m.name)
+        .join(', ')
+      message.children.push(
+        h('p', `⚙️ 模组 (${modCount}个): ${modList}`)
+      )
+    }
+
+    // 缓存信息
+    if (status.expires_at) {
+      const cacheTime = Math.max(0, Math.floor((status.expires_at - Date.now()) / 1000))
+      message.children.push(
+        h('p', { style: { fontSize: '12px', color: '#888' } },
+          `⏱️ 缓存剩余: ${cacheTime}秒 | 使用 -f 强制刷新`
+        )
+      )
+    }
+
+    return message
+  } catch (error) {
+    ctx.logger.error('MC状态查询失败:', error)
+    return h('message', [
+      h('p', `❌ 查询 ${server.name} 失败`),
+      h('p', { style: { color: '#ff6666' } }, '请检查: 1) 服务器地址是否正确 2) 服务器是否在线 3) 网络连接是否正常')
+    ])
   }
+}
 
   async function getDirectServerStatus(address: string, config: Config, force: boolean, timeout: number) {
     try {
@@ -419,42 +471,40 @@ export function apply(ctx: Context, config: Config) {
     }
   }
 
-// 核心函数：获取服务器状态 - 已修复URL构建问题和重试机制
-async function getServerStatus(address: string, timeout: number, enableQuery: boolean, force: boolean) {
-  // 验证地址是否有效
-  if (!address || address.trim() === '') {
-    throw new Error('服务器地址不能为空')
-  }
-
-  const cacheKey = `mcstatus:${address}:${enableQuery}`
-
-  // 检查缓存
-  if (!force) {
-    const cached = cache.get(cacheKey)
-    if (cached && Date.now() - cached.timestamp < config.querySettings.cacheTime * 1000) {
-      return cached.data
+  // 修改后的核心查询函数
+  async function getServerStatus(address: string, timeout: number, enableQuery: boolean, force: boolean) {
+    if (!address || address.trim() === '') {
+      throw new Error('服务器地址不能为空')
     }
-  }
 
-  // 构建URL
-  const url = `https://api.mcstatus.io/v2/status/java/${encodeURIComponent(address)}`
-  const params = {
-    query: enableQuery.toString(),
-    timeout: timeout.toString()  // 这是API参数，需要字符串类型
-  }
+    const cacheKey = `mcstatus:${address}:${enableQuery}:${config.apiSettings.apiProvider}`
 
-  const maxRetries = 3
-  let lastError: Error
-  let retryDelay = 1000 // 初始重试延迟1秒
+    // 检查缓存
+    if (!force) {
+      const cached = cache.get(cacheKey)
+      if (cached && Date.now() - cached.timestamp < config.querySettings.cacheTime * 1000) {
+        return cached.data
+      }
+    }
 
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    let response
+    const { apiProvider } = config.apiSettings
+
     try {
-      // 发送请求
-      // 注意：这里第一个timeout是API参数（秒），第二个timeout是请求超时（毫秒）
-      const response = await ctx.http.get(url, { 
-        params, 
-        timeout: timeout * 1000 + 5000  // 请求超时 = API超时 + 5秒缓冲
-      })
+      if (apiProvider === 'lazy') {
+        // 使用Lazy API
+        response = await queryWithLazyApi(address, timeout)
+      } else {
+        // 使用默认的mcstatus.io API（原有逻辑）
+        const url = `https://api.mcstatus.io/v2/status/java/${encodeURIComponent(address)}`
+        const params = {
+          query: enableQuery.toString()
+        }
+        response = await ctx.http.get(url, {
+          params,
+          timeout: timeout * 1000 + 5000
+        })
+      }
 
       // 缓存结果
       cache.set(cacheKey, {
@@ -462,25 +512,134 @@ async function getServerStatus(address: string, timeout: number, enableQuery: bo
         timestamp: Date.now()
       })
 
-      ctx.logger.debug(`MC状态查询成功: ${address} (第${attempt}次尝试)`)
+      ctx.logger.debug(`${apiProvider.toUpperCase()} API查询成功: ${address}`)
       return response
-    } catch (error) {
-      lastError = error
-      ctx.logger.warn(`MC状态查询失败 (第${attempt}次尝试): ${address}`, error.message)
 
-      // 如果不是最后一次尝试，等待后重试
-      if (attempt < maxRetries) {
-        const delay = retryDelay * attempt // 指数退避：1秒, 2秒, 4秒
-        ctx.logger.debug(`将在 ${delay}ms 后重试查询 ${address}`)
-        await new Promise(resolve => setTimeout(resolve, delay))
-      }
+    } catch (error) {
+      ctx.logger.error(`${apiProvider.toUpperCase()} API查询失败: ${address}`, error)
+      throw new Error(`查询服务器状态失败: ${address} (${error.message})`)
     }
   }
 
-  // 所有重试都失败
-  ctx.logger.error(`查询服务器状态失败，已重试 ${maxRetries} 次: ${address}`, lastError)
-  throw new Error(`查询服务器状态失败: ${address} (${lastError.message})`)
+  // 新增：Lazy API请求函数
+  async function queryWithLazyApi(host: string, timeout: number) {
+    const { lazyApiUrl, useBackup, returnType, autoDetectBedrock } = config.apiSettings
+
+    // 选择API地址
+    const baseUrl = useBackup ? 'https://api.lazy.ink/mcapi' : lazyApiUrl
+
+    const params = new URLSearchParams({
+      type: returnType,
+      host: host
+    })
+
+    if (autoDetectBedrock) {
+      // 这里可以添加基岩版检测逻辑
+      params.append('be', 'false') // 默认false，可根据需要调整
+    }
+
+    const url = `${baseUrl}?${params.toString()}`
+
+    try {
+      const response = await ctx.http.get(url, { timeout: timeout * 1000 })
+      return transformLazyResponse(response, host)
+    } catch (error) {
+      ctx.logger.error('Lazy API查询失败:', error)
+      throw new Error(`Lazy API查询失败: ${error.message}`)
+    }
+  }
+
+// 修改 transformLazyResponse 函数
+function transformLazyResponse(lazyData: any, host: string) {
+  // 处理 MOTD - 将 extra 数组中的文本拼接，并去除颜色代码
+  let cleanMotd = '';
+  if (lazyData.motd && lazyData.motd.extra) {
+    cleanMotd = lazyData.motd.extra.map((item: any) => item.text).join('');
+    // 去除颜色代码（§字符及其后一个字符）
+    cleanMotd = cleanMotd.replace(/§./g, '');
+  }
+  
+  // 处理版本信息
+  let versionName = lazyData.version || 'Unknown';
+  if (versionName === 'Unknown' || !versionName) {
+    versionName = '未知';
+  }
+  
+  return {
+    online: lazyData.status === '在线',
+    host: lazyData.host || host,
+    version: {
+      name_clean: versionName,
+      protocol: lazyData.protocol || 0
+    },
+    players: {
+      online: lazyData.players_online || 0,
+      max: lazyData.players_max || 0,
+      list: (lazyData.players || []).map((p: any) => ({ 
+        name_clean: p.name 
+      }))
+    },
+    motd: {
+      clean: cleanMotd || lazyData.motd?.text || 'A Minecraft Server'
+    },
+    icon: lazyData.favicon || null,
+    software: lazyData.software || '',
+    plugins: lazyData.plugins || [],
+    mods: lazyData.mods || [],
+    retrieved_at: Date.now(),
+    expires_at: Date.now() + (config.querySettings.cacheTime * 1000)
+  };
 }
+
+  // 新增：API状态检查命令
+  ctx.command('mcstatus.api', '检查API状态')
+    .option('switch', '-s <provider> 切换API提供商', { type: 'string' })
+    .option('test', '-t 测试所有API')
+    .action(async ({ session, options }) => {
+      if (options.switch) {
+        if (['mcstatus', 'lazy'].includes(options.switch.toLowerCase())) {
+          config.apiSettings.apiProvider = options.switch.toLowerCase() as 'mcstatus' | 'lazy'
+          return `✅ 已切换API提供商为: ${options.switch.toUpperCase()}`
+        } else {
+          return '❌ 无效的API提供商，可选: mcstatus, lazy'
+        }
+      }
+
+      if (options.test) {
+        const testServers = [
+          { name: 'Hypixel', host: 'mc.hypixel.net' },
+          { name: '演示服务器', host: 'demo.mcstatus.io' }
+        ]
+
+        const results = []
+        for (const server of testServers) {
+          try {
+            const startTime = Date.now()
+            await getServerStatus(server.host, 5, false, true)
+            const responseTime = Date.now() - startTime
+            results.push(`🟢 ${server.name}: ${responseTime}ms`)
+          } catch (error) {
+            results.push(`🔴 ${server.name}: 失败`)
+          }
+        }
+
+        return h('message', [
+          h('p', `当前API提供商: ${config.apiSettings.apiProvider.toUpperCase()}`),
+          h('p', 'API测试结果:'),
+          ...results.map(r => h('p', r)),
+          h('p', { style: { fontSize: '12px', color: '#888' } },
+            '使用 "mcstatus.api -s <provider>" 切换API')
+        ])
+      }
+
+      return h('message', [
+        h('p', `当前API提供商: ${config.apiSettings.apiProvider.toUpperCase()}`),
+        h('p', `Lazy API地址: ${config.apiSettings.useBackup ? '备用地址' : config.apiSettings.lazyApiUrl}`),
+        h('p', `返回类型: ${config.apiSettings.returnType.toUpperCase()}`),
+        h('p', { style: { fontSize: '12px', color: '#888' } },
+          '使用 "mcstatus.api -t" 测试API或 "mcstatus.api -s <provider>" 切换')
+      ])
+    })
 
   // 定期清理缓存
   setInterval(() => {
