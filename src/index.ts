@@ -41,8 +41,8 @@ export const Config: Schema<Config> = Schema.intersect([
 
   Schema.object({
     minekuaiSettings: Schema.object({
-      apiUrl: Schema.string().description('麦块API地址').default(''),
-      apiKey: Schema.string().description('麦块API密钥').default('')
+      apiUrl: Schema.string().description('麦块API地址').default('https://minekuai.com/api/client'),
+      apiKey: Schema.string().description('麦块API密钥'),
     })
   }).description('麦块联机配置(可选)')
 ])
@@ -249,10 +249,25 @@ export function apply(ctx: Context, config: Config) {
       if (!server.minekuaiInstanceId) return `服务器 ${server.name} 未配置麦块实例ID`
 
       try {
-        await minekuaiApiRequest(server.minekuaiInstanceId, 'restart', 3)
+        // 第一步：发送停止指令
+        //session.send(`🔄 正在停止服务器 ${server.name}...`)
+        await minekuaiApiRequest(server.minekuaiInstanceId, 'stop', 3)
+
+        // 等待1秒
         await new Promise(resolve => setTimeout(resolve, 1000))
+
+        // 第二步：发送强制停止指令
+        //session.send(`⏹️ 正在强制停止服务器 ${server.name}...`)
         await minekuaiApiRequest(server.minekuaiInstanceId, 'kill', 3)
-        return `✅ 已发送重启指令到服务器 ${server.name} (ID: ${id})`
+
+        // 等待3秒
+        await new Promise(resolve => setTimeout(resolve, 3000))
+
+        // 第三步：发送启动指令
+        //session.send(`🚀 正在启动服务器 ${server.name}...`)
+        await minekuaiApiRequest(server.minekuaiInstanceId, 'start', 3)
+
+        return `✅ 服务器 ${server.name} 重启指令已发送完成，请稍后检查服务器状态`
       } catch (error) {
         return `❌ 重启服务器 ${server.name} 失败: ${error.message}`
       }
