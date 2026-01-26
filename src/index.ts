@@ -184,44 +184,75 @@ export function apply(ctx: Context, config: Config) {
     return message
   }
 
-  // 查服指令
-  ctx.command('查服 [id:number]', '查询Minecraft服务器状态')
-    .action(async ({ session }, id) => {
-      // 不带参数：查询全部服务器
-      if (id === undefined) {
-        if (config.servers.length === 0) {
-          return '❌ 未配置任何服务器'
-        }
+// 查服指令
+ctx.command('查服 [id:number]', '查询Minecraft服务器状态')
+  .action(async ({ session }, id) => {
+    // 不带参数：查询全部服务器
+    if (id === undefined) {
+      if (config.servers.length === 0) {
+        return '❌ 未配置任何服务器'
+      }
 
-        const results = await Promise.all(
-          config.servers.map(server => queryServerStatus(server))
-        )
-
-        let message = `📊 服务器状态汇总 (${results.length}台)\n\n`
-        results.forEach((result, index) => {
-          if (result.success) {
-            message += formatShortStatus(result.data, result.server) + '\n'
-          } else {
-            message += `❌ ${result.server.name} - 查询失败: ${result.error}\n`
+      const results = []
+      const servers = config.servers
+      
+      // 按顺序查询服务器，每个间隔3秒
+      for (let i = 0; i < servers.length; i++) {
+        const server = servers[i]
+        try {
+          const result = await queryServerStatus(server)
+          results.push(result)
+          
+          // 发送实时查询结果
+          if (session && session.send) {
+            if (result.success) {
+              session.send(formatShortStatus(result.data, result.server))
+            } else {
+              session.send(`❌ ${result.server.name} - 查询失败: ${result.error}`)
+            }
           }
-        })
-
-        return message
+          
+          // 如果不是最后一个服务器，等待3秒
+          if (i < servers.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 3000))
+          }
+        } catch (error) {
+          results.push({
+            success: false,
+            error: error.message,
+            server: server
+          })
+        }
       }
 
-      // 带参数：查询指定服务器
-      const server = config.servers.find(s => s.id === id)
-      if (!server) {
-        return `❌ 未找到ID为 ${id} 的服务器`
-      }
+      // 计算在线服务器数量
+      const onlineCount = results.filter(r => r.success && r.data && r.data.online).length
+      
+      let message = `📊 服务器状态汇总 (当前在线${onlineCount}/${results.length}台)\n\n`
+      results.forEach((result, index) => {
+        if (result.success) {
+          message += formatShortStatus(result.data, result.server) + '\n'
+        } else {
+          message += `❌ ${result.server.name} - 查询失败: ${result.error}\n`
+        }
+      })
 
-      const result = await queryServerStatus(server)
-      if (!result.success) {
-        return `❌ 查询服务器 ${server.name} 失败: ${result.error}`
-      }
+      return message
+    }
 
-      return formatDetailedStatus(result.data, server)
-    })
+    // 带参数：查询指定服务器
+    const server = config.servers.find(s => s.id === id)
+    if (!server) {
+      return `❌ 未找到ID为 ${id} 的服务器`
+    }
+
+    const result = await queryServerStatus(server)
+    if (!result.success) {
+      return `❌ 查询服务器 ${server.name} 失败: ${result.error}`
+    }
+
+    return formatDetailedStatus(result.data, server)
+  })
 
   // 原有的开服和重启指令（保持不变）
   ctx.command('开服 <id:number>', '启动麦块服务器')
