@@ -203,15 +203,6 @@ export function apply(ctx: Context, config: Config) {
             const result = await queryServerStatus(server)
             results.push(result)
 
-            // 发送实时查询结果
-            if (session && session.send) {
-              if (result.success) {
-                session.send(formatShortStatus(result.data, result.server))
-              } else {
-                session.send(`❌ ${result.server.name} - 查询失败: ${result.error}`)
-              }
-            }
-
             // 如果不是最后一个服务器，等待3秒
             if (i < servers.length - 1) {
               await new Promise(resolve => setTimeout(resolve, 3000))
