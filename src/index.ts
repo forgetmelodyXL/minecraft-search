@@ -280,6 +280,22 @@ ctx.command('查服 [id:number]', '查询Minecraft服务器状态')
       if (!server.minekuaiInstanceId) return `服务器 ${server.name} 未配置麦块实例ID`
 
       try {
+        await minekuaiApiRequest(server.minekuaiInstanceId, 'restart', 3)
+        return `✅ 服务器 ${server.name} 重启指令已发送完成，请稍后检查服务器状态`
+      } catch (error) {
+        return `❌ 重启服务器 ${server.name} 失败: ${error.message}`
+      }
+    })
+
+    ctx.command('强制重启 <id:number>', '强制重启麦块服务器')
+    .action(async ({ session }, id) => {
+      if (!id) return '请提供服务器ID，例如：强制重启 1'
+
+      const server = config.servers.find(s => s.id === id)
+      if (!server) return `未找到ID为 ${id} 的服务器`
+      if (!server.minekuaiInstanceId) return `服务器 ${server.name} 未配置麦块实例ID`
+
+      try {
         // 第一步：发送停止指令
         //session.send(`🔄 正在停止服务器 ${server.name}...`)
         await minekuaiApiRequest(server.minekuaiInstanceId, 'stop', 3)
@@ -298,9 +314,9 @@ ctx.command('查服 [id:number]', '查询Minecraft服务器状态')
         //session.send(`🚀 正在启动服务器 ${server.name}...`)
         await minekuaiApiRequest(server.minekuaiInstanceId, 'start', 3)
 
-        return `✅ 服务器 ${server.name} 重启指令已发送完成，请稍后检查服务器状态`
+        return `✅ 服务器 ${server.name} 强制重启指令已发送完成，请稍后检查服务器状态`
       } catch (error) {
-        return `❌ 重启服务器 ${server.name} 失败: ${error.message}`
+        return `❌ 强制重启服务器 ${server.name} 失败: ${error.message}`
       }
     })
 }
