@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-minecraft-search",
   "description": "使用API查询基础的mc服务器信息",
-  "version": "1.1.5",
+  "version": "1.1.6",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "files": [
