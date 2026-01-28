@@ -202,12 +202,20 @@ ctx.command('mc/查服 [id:number]', '查询Minecraft服务器状态')
 
       let message = `📊 服务器状态汇总 (当前在线${onlineCount}/${results.length}台)\n\n`
       results.forEach((result, index) => {
+        const serverIndex = index + 1 // 服务器序号，从1开始
         if (result.success) {
-          message += formatShortStatus(result.data, result.server) + '\n'
+          // 在服务器名称前添加序号
+          const originalStatus = formatShortStatus(result.data, result.server)
+          // 从原始状态中提取状态符号后面的部分
+          const statusWithoutName = originalStatus.substring(originalStatus.indexOf(' ') + 1)
+          message += `[${serverIndex}] ${statusWithoutName}\n`
         } else {
-          message += `❌ ${result.server.name} - 查询失败: ${result.error}\n`
+          message += `[${serverIndex}] ❌ ${result.server.name} - 查询失败: ${result.error}\n`
         }
       })
+      
+      // 添加提示信息
+      message += `\n💡 输入"查服+服务器序号"即可查询详细状态，例如：查服 1`
 
       return message
     }
