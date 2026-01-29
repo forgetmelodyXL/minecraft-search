@@ -65,7 +65,7 @@ export function apply(ctx: Context, config: Config) {
     }
   }
 
-  // 麦块API请求函数（保持不变）
+  // 麦块API请求函数
   async function minekuaiApiRequest(instanceId: string, operation: string, maxRetries = 3) {
     const { apiUrl, apiKey } = config.minekuaiSettings
     if (!apiKey) throw new Error('麦块API密钥未配置')
