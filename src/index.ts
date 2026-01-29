@@ -184,7 +184,7 @@ export function apply(ctx: Context, config: Config) {
     return message
   }
 
-// 查服指令
+// 修改查服指令
 ctx.command('mc/查服 [id:number]', '查询Minecraft服务器状态')
   .action(async ({ session }, id) => {
     // 不带参数：查询全部服务器
@@ -201,19 +201,20 @@ ctx.command('mc/查服 [id:number]', '查询Minecraft服务器状态')
       const onlineCount = results.filter(r => r.success && r.data && r.data.online).length
 
       let message = `📊 服务器状态汇总 (当前在线${onlineCount}/${results.length}台)\n\n`
-      results.forEach((result, index) => {
-        const serverIndex = index + 1 // 服务器序号，从1开始
+      results.forEach((result) => {
+        // 使用服务器配置中的ID，而不是数组索引
+        const serverId = result.server.id
         if (result.success) {
-          // 直接获取完整的格式化状态，在前面添加序号
+          // 直接获取完整的格式化状态，在前面添加服务器ID
           const originalStatus = formatShortStatus(result.data, result.server)
-          message += `[${serverIndex}] ${originalStatus}\n`
+          message += `[ID:${serverId}] ${originalStatus}\n`
         } else {
-          message += `[${serverIndex}] ❌ ${result.server.name} - 查询失败: ${result.error}\n`
+          message += `[ID:${serverId}] ❌ ${result.server.name} - 查询失败: ${result.error}\n`
         }
       })
       
-      // 添加提示信息
-      message += `\n💡 输入"查服+服务器序号"即可查询详细状态，例如：查服 1`
+      // 更新提示信息
+      message += `\n💡 输入"查服+服务器ID"即可查询详细状态，例如：查服 ${config.servers[0]?.id || 1}`
 
       return message
     }
