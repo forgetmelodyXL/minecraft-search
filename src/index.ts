@@ -9,7 +9,7 @@ export interface ServerConfig {
   name: string
   host: string
   minekuaiInstanceId?: string
-  // 新增：查询配置
+  // 查询配置
   timeout?: number
   enableQuery?: boolean
   serverType?: 'java' | 'bedrock'
