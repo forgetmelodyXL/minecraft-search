@@ -168,8 +168,8 @@ export function apply(ctx: Context, config: Config) {
     if (result.players) {
       message += `👥 人数: ${result.players.online}/${result.players.max}\n`
       if (result.players.list && result.players.list.length > 0) {
-        const samplePlayers = result.players.list.slice(0, 3).map(p => p.name_clean).join(', ')
-        message += `👤 在线玩家: ${samplePlayers}${result.players.list.length > 3 ? '...' : ''}\n`
+        const allPlayers = result.players.list.map(p => p.name_clean).join(', ')
+        message += `👤 在线玩家: ${allPlayers}\n`
       }
     }
 
