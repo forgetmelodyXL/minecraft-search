@@ -21,7 +21,7 @@
 
 1. 安装插件：
 ```bash
-npm install koishi-plugin-minecraft-status
+npm install koishi-plugin-minecraft-search
 ```
 
 2. 在 Koishi 配置文件中启用插件。
@@ -36,7 +36,6 @@ servers: [
     name: "主服务器",          // 服务器名称
     host: "play.example.com:25565", // 服务器地址（支持带端口）
     serverType: "java",       // 服务器类型：java/bedrock
-    enableQuery: false,       // 是否启用Query查询
     timeout: 5.0,            // 查询超时时间（秒）
     minekuaiInstanceId: "xxx" // 麦块实例ID（可选，用于电源控制）
   }
@@ -61,17 +60,20 @@ minekuaiSettings: {
 
 **输出示例：**
 ```
-📊 服务器状态汇总 (3台)
+📊 服务器状态汇总 (当前在线2/3台)
 
-🟢 主服务器 - 在线 | 玩家: 15/50 | 版本: 1.20.1
-🟢 生存服 - 在线 | 玩家: 8/30 | 版本: 1.19.4
-🔴 创造服 - 离线
+[ID:1] 🟢 主服务器 - 在线 | 玩家: 15/50 | 版本: 1.20.1
+[ID:2] 🟢 生存服 - 在线 | 玩家: 8/30 | 版本: 1.19.4
+[ID:3] 🔴 创造服 - 离线
+
+💡 输入"查服+服务器ID"即可查询详细状态，例如：查服 1
 ```
 
 ### 服务器电源控制
 ```
 开服 1      # 启动ID为1的麦块服务器
 重启 1      # 重启ID为1的麦块服务器
+强制重启 1  # 强制重启ID为1的麦块服务器
 ```
 
 ## 配置选项说明
@@ -80,9 +82,7 @@ minekuaiSettings: {
 - `java`：Java 版服务器（默认）
 - `bedrock`：基岩版服务器
 
-### Query 查询 (enableQuery)
-- `true`：启用 Query 查询，获取更详细信息（插件、服务端软件等）
-- `false`：禁用 Query 查询，查询速度更快（默认）
+
 
 ### 超时时间 (timeout)
 - 默认值：5.0 秒
@@ -98,7 +98,7 @@ minekuaiSettings: {
 
 ## 依赖说明
 
-- 使用 https://github.com/mcstatus-io/node-mcstatus 库进行服务器状态查询
+- 使用 https://motd.minebbs.com/api/status API 进行服务器状态查询
 - 支持麦块联机平台的 API 集成
 - 基于 Koishi 框架开发
 
@@ -118,6 +118,13 @@ minekuaiSettings: {
 - 麦块 API 配置是否正确
 
 ## 更新日志
+
+### v1.2.0
+- 新增强制重启服务器功能
+- 修正包名为 koishi-plugin-minecraft-search
+- 更新服务器状态查询使用 minebbs.com API
+- 优化服务器状态查询输出格式，添加服务器ID显示
+- 改进服务器状态汇总信息，显示在线服务器数量
 
 ### v1.1.1
 - 初始版本发布

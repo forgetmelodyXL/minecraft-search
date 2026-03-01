@@ -1,7 +1,6 @@
 import { Context, Schema, h } from 'koishi'
-const mcs = require('node-mcstatus')
 
-export const name = 'minecraft-status'
+export const name = 'minecraft-search'
 
 // 服务器配置接口
 export interface ServerConfig {
@@ -11,7 +10,6 @@ export interface ServerConfig {
   minekuaiInstanceId?: string
   // 查询配置
   timeout?: number
-  enableQuery?: boolean
   serverType?: 'java' | 'bedrock'
 }
 
@@ -33,7 +31,6 @@ export const Config: Schema<Config> = Schema.intersect([
       name: Schema.string().required().description('服务器名称'),
       host: Schema.string().required().description('服务器地址'),
       serverType: Schema.union(['java', 'bedrock']).default('java').description('服务器类型'),
-      enableQuery: Schema.boolean().default(false).description('是否启用Query查询'),
       timeout: Schema.number().default(5.0).description('查询超时时间(秒)'),
       minekuaiInstanceId: Schema.string().description('麦块实例ID (可选)'),
     })).description('服务器列表').role('table').required()
@@ -103,17 +100,40 @@ export function apply(ctx: Context, config: Config) {
       const defaultPort = server.serverType === 'bedrock' ? 19132 : 25565
       const { host, port } = parseServerAddress(server.host, defaultPort)
 
-      const options = {
-        query: server.enableQuery || false,
-        timeout: server.timeout || 5.0
-      }
+      // 构建 API 请求 URL
+      const apiUrl = `https://motd.minebbs.com/api/status`
+      const params = new URLSearchParams()
+      params.append('ip', host)
+      params.append('port', port.toString())
+      params.append('stype', server.serverType === 'bedrock' ? 'be' : 'je')
 
-      let result
-      if (server.serverType === 'bedrock') {
-        // Bedrock版本不支持query选项
-        result = await mcs.statusBedrock(host, port, { timeout: options.timeout })
-      } else {
-        result = await mcs.statusJava(host, port, options)
+      // 发送 HTTP GET 请求
+      const response = await ctx.http.get(`${apiUrl}?${params.toString()}`)
+
+      // 转换 API 返回的数据格式以匹配原有结构
+      const result = {
+        online: response.status === 'online',
+        host: response.host.split(':')[0], // 只使用主机名，不包含端口
+        port: parseInt(response.host.split(':')[1]) || port,
+        version: {
+          name: response.version,
+          name_clean: response.version,
+          protocol: response.protocol
+        },
+        players: {
+          online: response.players.online,
+          max: response.players.max,
+          list: response.players.sample ? [{ name_clean: response.players.sample }] : []
+        },
+        motd: {
+          clean: response.pureMotd,
+          raw: response.motd.text
+        },
+        icon: response.icon,
+        retrieved_at: new Date().toISOString(),
+        // 保留原有结构中的其他字段
+        software: undefined,
+        ip_address: host
       }
 
       return {
