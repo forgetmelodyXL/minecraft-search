@@ -129,9 +129,10 @@ export function apply(ctx: Context, config: Config) {
         server: server
       }
     } catch (error) {
+      // 连接失败时显示为服务器离线
       return {
         success: false,
-        error: error.message,
+        error: '服务器离线',
         server: server
       }
     }
@@ -229,7 +230,8 @@ ctx.command('mc/查服 [id:number]', '查询Minecraft服务器状态')
           const originalStatus = formatShortStatus(result.data, result.server)
           message += `[ID:${serverId}] ${originalStatus}\n`
         } else {
-          message += `[ID:${serverId}] ❌ ${result.server.name} - 查询失败: ${result.error}\n`
+          // 统一显示为离线状态
+          message += `[ID:${serverId}] 🔴 ${result.server.name} - 离线\n`
         }
       })
       
@@ -247,7 +249,8 @@ ctx.command('mc/查服 [id:number]', '查询Minecraft服务器状态')
 
     const result = await queryServerStatus(server)
     if (!result.success) {
-      return `❌ 查询服务器 ${server.name} 失败: ${result.error}`
+      // 统一显示为离线状态
+      return `🔴 服务器 ${server.name} (${server.host}) 当前离线`
     }
 
     return formatDetailedStatus(result.data, server)
