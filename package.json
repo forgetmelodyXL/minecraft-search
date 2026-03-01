@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-minecraft-search",
   "description": "使用API查询基础的mc服务器信息",
-  "version": "1.1.12",
+  "version": "1.3.0",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "files": [
@@ -12,12 +12,20 @@
   "keywords": [
     "chatbot",
     "koishi",
-    "plugin"
+    "plugin",
+    "minecraft",
+    "server",
+    "status"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/koishi-plugin-minecraft-search.git"
+  },
+  "homepage": "https://github.com/yourusername/koishi-plugin-minecraft-search",
   "peerDependencies": {
     "koishi": "^4.18.7"
   },
   "dependencies": {
-    "node-mcstatus": "^1.2.1"
+    "mc-server-util": "^1.0.0"
   }
 }

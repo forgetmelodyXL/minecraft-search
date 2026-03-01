@@ -7,10 +7,11 @@
 ## 功能特性
 
 ### 🎮 服务器状态查询
-- 支持 Java 版和基岩版服务器
+- 支持 Java 版服务器
 - 支持查询全部服务器状态（简短信息）
 - 支持查询指定服务器状态（详细信息）
-- 可配置查询超时时间和 Query 查询选项
+- 可配置查询超时时间
+- 自动移除 Minecraft 颜色代码，显示纯文本 MOTD
 
 ### ⚡ 服务器电源控制
 - 支持通过麦块联机 API 启动服务器
@@ -21,7 +22,7 @@
 
 1. 安装插件：
 ```bash
-npm install koishi-plugin-minecraft-status
+npm install koishi-plugin-minecraft-search
 ```
 
 2. 在 Koishi 配置文件中启用插件。
@@ -78,11 +79,7 @@ minekuaiSettings: {
 
 ### 服务器类型 (serverType)
 - `java`：Java 版服务器（默认）
-- `bedrock`：基岩版服务器
-
-### Query 查询 (enableQuery)
-- `true`：启用 Query 查询，获取更详细信息（插件、服务端软件等）
-- `false`：禁用 Query 查询，查询速度更快（默认）
+- `bedrock`：基岩版服务器（暂不支持）
 
 ### 超时时间 (timeout)
 - 默认值：5.0 秒
@@ -98,7 +95,7 @@ minekuaiSettings: {
 
 ## 依赖说明
 
-- 使用 https://github.com/mcstatus-io/node-mcstatus 库进行服务器状态查询
+- 使用 https://www.npmjs.com/package/mc-server-util 库进行服务器状态查询
 - 支持麦块联机平台的 API 集成
 - 基于 Koishi 框架开发
 
@@ -118,6 +115,13 @@ minekuaiSettings: {
 - 麦块 API 配置是否正确
 
 ## 更新日志
+
+### v1.3.0
+- 替换服务器状态查询库为 mc-server-util
+- 移除对基岩版服务器的支持（暂不支持）
+- 移除 Query 查询选项
+- 添加自动移除 Minecraft 颜色代码功能
+- 优化错误处理和类型检查
 
 ### v1.1.1
 - 初始版本发布

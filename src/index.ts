@@ -1,7 +1,7 @@
 import { Context, Schema, h } from 'koishi'
-const mcs = require('node-mcstatus')
+import { getMinecraftServerStatus } from 'mc-server-util'
 
-export const name = 'minecraft-status'
+export const name = 'minecraft-search'
 
 // 服务器配置接口
 export interface ServerConfig {
@@ -11,7 +11,6 @@ export interface ServerConfig {
   minekuaiInstanceId?: string
   // 查询配置
   timeout?: number
-  enableQuery?: boolean
   serverType?: 'java' | 'bedrock'
 }
 
@@ -33,7 +32,6 @@ export const Config: Schema<Config> = Schema.intersect([
       name: Schema.string().required().description('服务器名称'),
       host: Schema.string().required().description('服务器地址'),
       serverType: Schema.union(['java', 'bedrock']).default('java').description('服务器类型'),
-      enableQuery: Schema.boolean().default(false).description('是否启用Query查询'),
       timeout: Schema.number().default(5.0).description('查询超时时间(秒)'),
       minekuaiInstanceId: Schema.string().description('麦块实例ID (可选)'),
     })).description('服务器列表').role('table').required()
@@ -103,17 +101,17 @@ export function apply(ctx: Context, config: Config) {
       const defaultPort = server.serverType === 'bedrock' ? 19132 : 25565
       const { host, port } = parseServerAddress(server.host, defaultPort)
 
-      const options = {
-        query: server.enableQuery || false,
-        timeout: server.timeout || 5.0
-      }
+      const timeout = (server.timeout || 5.0) * 1000 // 转换为毫秒
 
       let result
       if (server.serverType === 'bedrock') {
-        // Bedrock版本不支持query选项
-        result = await mcs.statusBedrock(host, port, { timeout: options.timeout })
+        // Bedrock版本暂时不支持，因为 mc-server-util 主要支持 Java 版本
+        throw new Error('Bedrock服务器暂不支持')
       } else {
-        result = await mcs.statusJava(host, port, options)
+        result = await getMinecraftServerStatus(host, port, {
+          timeout: timeout,
+          debug: false
+        })
       }
 
       return {
@@ -137,7 +135,7 @@ export function apply(ctx: Context, config: Config) {
     }
 
     const players = result.players ? `${result.players.online}/${result.players.max}` : 'N/A'
-    const version = result.version ? result.version.name_clean || result.version.name : 'N/A'
+    const version = result.version ? result.version.name : 'N/A'
 
     return `🟢 ${server.name} - 在线 | 玩家: ${players} | 版本: ${version}`
   }
@@ -150,36 +148,49 @@ export function apply(ctx: Context, config: Config) {
 
     // 处理MOTD，将换行符替换为空格
     let motdText = '暂无描述'
-    if (result.motd && result.motd.clean) {
+    if (result.description) {
+      // 确保 description 是字符串
+      let descriptionStr = result.description
+      if (typeof descriptionStr !== 'string') {
+        // 如果是对象，尝试转换为字符串
+        if (typeof descriptionStr === 'object' && descriptionStr !== null) {
+          // 检查是否有 text 属性（某些版本的 mc-server-util 可能返回对象）
+          if (descriptionStr.text) {
+            descriptionStr = descriptionStr.text
+          } else {
+            descriptionStr = JSON.stringify(descriptionStr)
+          }
+        } else {
+          descriptionStr = String(descriptionStr)
+        }
+      }
+      // 移除Minecraft颜色代码（§开头的代码）
+      descriptionStr = descriptionStr.replace(/§[0-9a-fk-or]/gi, '')
       // 替换所有换行符为空格，并去除多余空格
-      motdText = result.motd.clean.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim()
+      motdText = descriptionStr.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim()
     }
 
+    const defaultPort = server.serverType === 'bedrock' ? 19132 : 25565
+    const { host, port } = parseServerAddress(server.host, defaultPort)
+
     let message = `🟢 ${server.name} 状态信息\n`
-    message += `📡 地址: ${result.host}:${result.port}\n`
-    //message += `🌐 IP: ${result.ip_address || '未知'}\n`
+    message += `📡 地址: ${host}:${port}\n`
     message += `🎮 类型: ${server.serverType || 'Java'}\n`
 
     if (result.version) {
-      message += `📦 版本: ${result.version.name_clean || result.version.name}\n`
-      //message += `🔧 协议: ${result.version.protocol || 'N/A'}\n`
+      message += `📦 版本: ${result.version.name}\n`
     }
 
     if (result.players) {
       message += `👥 人数: ${result.players.online}/${result.players.max}\n`
-      if (result.players.list && result.players.list.length > 0) {
-        const allPlayers = result.players.list.map(p => p.name_clean).join(', ')
+      if (result.players.sample && result.players.sample.length > 0) {
+        const allPlayers = result.players.sample.map(p => p.name).join(', ')
         message += `👤 在线玩家: ${allPlayers}\n`
       }
     }
 
     message += `📋 MOTD: ${motdText}\n`
-
-    if (result.software) {
-      //message += `⚙️ 服务端: ${result.software}\n`
-    }
-
-    message += `⏰ 查询时间: ${new Date(result.retrieved_at).toLocaleString('zh-CN')}`
+    message += `⏰ 查询时间: ${new Date().toLocaleString('zh-CN')}`
 
     return message
   }
