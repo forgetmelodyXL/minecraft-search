@@ -1,5 +1,9 @@
-import { Context, Schema, h } from 'koishi'
-import { getMinecraftServerStatus } from 'mc-server-util'
+import { Context, Schema } from 'koishi'
+// 动态导入 mc-server-util
+let getMinecraftServerStatus: any
+import('mc-server-util').then(m => {
+  getMinecraftServerStatus = m.getMinecraftServerStatus
+})
 
 export const name = 'minecraft-search'
 
@@ -98,6 +102,11 @@ export function apply(ctx: Context, config: Config) {
   // 查询单个服务器状态
   async function queryServerStatus(server: ServerConfig) {
     try {
+      // 确保 getMinecraftServerStatus 已经被导入
+      if (!getMinecraftServerStatus) {
+        throw new Error('mc-server-util 模块未正确加载')
+      }
+
       const defaultPort = server.serverType === 'bedrock' ? 19132 : 25565
       const { host, port } = parseServerAddress(server.host, defaultPort)
 
