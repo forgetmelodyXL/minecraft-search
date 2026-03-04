@@ -129,10 +129,20 @@ export function apply(ctx: Context, config: Config) {
         server: server
       }
     } catch (error) {
-      // 连接失败时显示为服务器离线
+      // 连接失败时显示具体错误原因，翻译成中文并移除IP
+      let errorMessage = error instanceof Error ? error.message : String(error)
+
+      // 翻译常见错误信息
+      errorMessage = errorMessage.replace(/connect ECONNREFUSED/i, '服务器已关闭')
+      errorMessage = errorMessage.replace(/connect ETIMEDOUT/i, '服务器连接超时')
+      errorMessage = errorMessage.replace(/connect ENOTFOUND/i, 'DNS服务器配置错误')
+
+      // 移除IP地址、域名和端口
+      errorMessage = errorMessage.replace(/\s+([\w.-]+):\d+/, '')
+
       return {
         success: false,
-        error: '服务器离线',
+        error: errorMessage,
         server: server
       }
     }
@@ -205,56 +215,56 @@ export function apply(ctx: Context, config: Config) {
     return message
   }
 
-// 修改查服指令
-ctx.command('mc/查服 [id:number]', '查询Minecraft服务器状态')
-  .action(async ({ session }, id) => {
-    // 不带参数：查询全部服务器
-    if (id === undefined) {
-      if (config.servers.length === 0) {
-        return '❌ 未配置任何服务器'
+  // 修改查服指令
+  ctx.command('mc/查服 [id:number]', '查询Minecraft服务器状态')
+    .action(async ({ session }, id) => {
+      // 不带参数：查询全部服务器
+      if (id === undefined) {
+        if (config.servers.length === 0) {
+          return '❌ 未配置任何服务器'
+        }
+
+        // 同步查询所有服务器
+        const queries = config.servers.map(server => queryServerStatus(server))
+        const results = await Promise.all(queries)
+
+        // 计算在线服务器数量
+        const onlineCount = results.filter(r => r.success && r.data && r.data.online).length
+
+        let message = `📊 服务器状态汇总 (当前在线${onlineCount}/${results.length}台)\n\n`
+        results.forEach((result) => {
+          // 使用服务器配置中的ID，而不是数组索引
+          const serverId = result.server.id
+          if (result.success) {
+            // 直接获取完整的格式化状态，在前面添加服务器ID
+            const originalStatus = formatShortStatus(result.data, result.server)
+            message += `[ID:${serverId}] ${originalStatus}\n`
+          } else {
+            // 显示具体错误原因
+            message += `[ID:${serverId}] 🔴 ${result.server.name} - 离线 | 原因：${result.error}\n`
+          }
+        })
+
+        // 更新提示信息
+        message += `\n💡 输入"查服+服务器ID"即可查询详细状态，例如：查服 ${config.servers[0]?.id || 1}`
+
+        return message
       }
 
-      // 同步查询所有服务器
-      const queries = config.servers.map(server => queryServerStatus(server))
-      const results = await Promise.all(queries)
+      // 带参数：查询指定服务器
+      const server = config.servers.find(s => s.id === id)
+      if (!server) {
+        return `❌ 未找到ID为 ${id} 的服务器`
+      }
 
-      // 计算在线服务器数量
-      const onlineCount = results.filter(r => r.success && r.data && r.data.online).length
+      const result = await queryServerStatus(server)
+      if (!result.success) {
+        // 显示具体错误原因
+        return `🔴 服务器 ${server.name} - 离线 | 原因：${result.error}`
+      }
 
-      let message = `📊 服务器状态汇总 (当前在线${onlineCount}/${results.length}台)\n\n`
-      results.forEach((result) => {
-        // 使用服务器配置中的ID，而不是数组索引
-        const serverId = result.server.id
-        if (result.success) {
-          // 直接获取完整的格式化状态，在前面添加服务器ID
-          const originalStatus = formatShortStatus(result.data, result.server)
-          message += `[ID:${serverId}] ${originalStatus}\n`
-        } else {
-          // 统一显示为离线状态
-          message += `[ID:${serverId}] 🔴 ${result.server.name} - 离线\n`
-        }
-      })
-      
-      // 更新提示信息
-      message += `\n💡 输入"查服+服务器ID"即可查询详细状态，例如：查服 ${config.servers[0]?.id || 1}`
-
-      return message
-    }
-
-    // 带参数：查询指定服务器
-    const server = config.servers.find(s => s.id === id)
-    if (!server) {
-      return `❌ 未找到ID为 ${id} 的服务器`
-    }
-
-    const result = await queryServerStatus(server)
-    if (!result.success) {
-      // 统一显示为离线状态
-      return `🔴 服务器 ${server.name} (${server.host}) 当前离线`
-    }
-
-    return formatDetailedStatus(result.data, server)
-  })
+      return formatDetailedStatus(result.data, server)
+    })
 
   // 原有的开服和重启指令（保持不变）
   ctx.command('mc/开服 <id:number>', '启动麦块服务器')

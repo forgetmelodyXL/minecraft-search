@@ -117,6 +117,14 @@ minekuaiSettings: {
 - 麦块 API 配置是否正确
 
 ## 更新日志
+<details>
+<summary>点我查看更新日志详情</summary>
+
+### v1.3.4
+- 优化错误信息显示，将英文错误信息翻译成中文
+- 统一服务器状态显示格式，离线服务器显示具体错误原因
+- 移除错误信息中的IP地址和域名，保护服务器隐私
+- 添加对 connect ENOTFOUND 错误的处理
 
 ### v1.3.0
 - 替换服务器状态查询库为 mc-server-util
@@ -130,6 +138,8 @@ minekuaiSettings: {
 - 支持服务器状态查询
 - 支持麦块联机电源控制
 - 支持 Java 和基岩版服务器
+
+</details>
 
 ## 支持与反馈
 
