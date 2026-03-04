@@ -136,9 +136,11 @@ export function apply(ctx: Context, config: Config) {
       errorMessage = errorMessage.replace(/connect ECONNREFUSED/i, '服务器已关闭')
       errorMessage = errorMessage.replace(/connect ETIMEDOUT/i, '服务器连接超时')
       errorMessage = errorMessage.replace(/connect ENOTFOUND/i, 'DNS服务器配置错误')
-
-      // 移除IP地址、域名和端口
-      errorMessage = errorMessage.replace(/\s+([\w.-]+):\d+/, '')
+      errorMessage = errorMessage.replace(/getaddrinfo EAI_AGAIN/i, 'DNS服务器配置错误')
+      
+      // 移除IP:端口和域名
+      errorMessage = errorMessage.replace(/\s+(\d+\.\d+\.\d+\.\d+):\d+/, '')
+      errorMessage = errorMessage.replace(/\s+[\w.-]+$/, '')
 
       return {
         success: false,
