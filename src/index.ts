@@ -333,4 +333,66 @@ export function apply(ctx: Context, config: Config) {
         return `❌ 强制重启服务器 ${server.name} 失败: ${error.message}`
       }
     })
+
+  // 新增：查看服务器资源使用情况
+  ctx.command('mc/资源 <id:number>', '查看麦块服务器资源使用情况')
+    .action(async ({ session }, id) => {
+      if (!id) return '请提供服务器ID，例如：资源 1'
+
+      const server = config.servers.find(s => s.id === id)
+      if (!server) return `未找到ID为 ${id} 的服务器`
+      if (!server.minekuaiInstanceId) return `服务器 ${server.name} 未配置麦块实例ID`
+
+      try {
+        const { apiUrl, apiKey } = config.minekuaiSettings
+        if (!apiKey) throw new Error('麦块API密钥未配置')
+        if (!apiUrl) throw new Error('麦块API地址未配置')
+
+        const baseUrl = apiUrl.replace(/\/+$/, '')
+        const url = `${baseUrl}/servers/${server.minekuaiInstanceId}/resources`
+        const headers = {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        }
+
+        const response = await ctx.http.get(url, { headers })
+        ctx.logger.info(`麦块API资源查询成功: 实例 ${server.minekuaiInstanceId}`)
+
+        // 解析API返回结构
+        const attributes = response.attributes
+        const resources = attributes.resources
+        const currentState = attributes.current_state
+        const isSuspended = attributes.is_suspended
+
+        // 计算资源使用情况
+        const memoryUsed = resources.memory_bytes / 1024 / 1024 / 1024 // 转换为GB
+        const cpuUsage = resources.cpu_absolute
+        const diskUsed = resources.disk_bytes / 1024 / 1024 / 1024 // 转换为GB
+        const uptime = resources.uptime // 秒
+
+        // 格式化运行时间
+        const uptimeDays = Math.floor(uptime / 86400)
+        const uptimeHours = Math.floor((uptime % 86400) / 3600)
+        const uptimeMinutes = Math.floor((uptime % 3600) / 60)
+        const uptimeSeconds = uptime % 60
+        const formattedUptime = `${uptimeDays}天 ${uptimeHours}小时 ${uptimeMinutes}分钟 ${uptimeSeconds}秒`
+
+        // 格式化资源使用情况
+        let message = `📊 ${server.name} 资源使用情况\n`
+        message += `� 状态: ${currentState === 'running' ? '运行中' : currentState}\n`
+        message += `🔄 暂停: ${isSuspended ? '是' : '否'}\n`
+        message += `🖥️ CPU: ${cpuUsage.toFixed(2)}%\n`
+        message += `💾 内存: ${memoryUsed.toFixed(2)}GB\n`
+        message += `💿 磁盘: ${diskUsed.toFixed(2)}GB\n`
+        message += `📡 网络接收: ${(resources.network_rx_bytes / 1024 / 1024).toFixed(2)}MB\n`
+        message += `📡 网络发送: ${(resources.network_tx_bytes / 1024 / 1024).toFixed(2)}MB\n`
+        message += `⏱️ 运行时间: ${formattedUptime}\n`
+        message += `⏰ 查询时间: ${new Date().toLocaleString('zh-CN')}`
+
+        return message
+      } catch (error) {
+        return `❌ 查询服务器 ${server.name} 资源使用情况失败: ${error.message}`
+      }
+    })
 }
