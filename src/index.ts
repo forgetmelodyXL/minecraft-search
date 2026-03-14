@@ -380,7 +380,7 @@ export function apply(ctx: Context, config: Config) {
 
         // 格式化资源使用情况
         let message = `📊 ${server.name} 资源使用情况\n`
-        message += `� 状态: ${currentState === 'running' ? '运行中' : currentState}\n`
+        message += `📋 状态: ${currentState === 'running' ? '运行中' : currentState}\n`
         message += `🔄 暂停: ${isSuspended ? '是' : '否'}\n`
         message += `🖥️ CPU: ${cpuUsage.toFixed(2)}%\n`
         message += `💾 内存: ${memoryUsed.toFixed(2)}GB\n`
