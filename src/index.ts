@@ -160,6 +160,7 @@ export function apply(ctx: Context, config: Config) {
 
       errorMessage = errorMessage.replace(/\s+(\d+\.\d+\.\d+\.\d+):\d+/, '')
       errorMessage = errorMessage.replace(/\s+[\w.-]+$/, '')
+      errorMessage = errorMessage.replace(/\s+[a-zA-Z0-9][a-zA-Z0-9.-]*:[0-9]+/, '')
 
       return {
         success: false,
@@ -188,11 +189,7 @@ export function apply(ctx: Context, config: Config) {
   function formatDetailedStatus(result: any, server: ServerConfig, showIp: boolean) {
     const displayName = getServerName(server)
     if (!result.online) {
-      if (showIp) {
-        return `🔴 ${displayName} (${server.host}) 当前离线`
-      } else {
-        return `🔴 ${displayName} 当前离线`
-      }
+      return `🔴 ${displayName} 当前离线`
     }
 
     let motdText = '暂无描述'
@@ -303,7 +300,7 @@ export function apply(ctx: Context, config: Config) {
 
       const result = await queryServerStatus(tempServer)
       if (!result.success) {
-        return `🔴 服务器 ${parsedHost}:${parsedPort} - 离线 | 原因：${result.error}`
+        return `🔴 服务器 - 离线 | 原因：${result.error}`
       }
 
       return formatDetailedStatus(result.data, tempServer, config.showIpInDetail)
@@ -313,6 +310,7 @@ export function apply(ctx: Context, config: Config) {
     .command('mc/绑定 <host:string>', '绑定Minecraft服务器')
     .option('name', '-n <name:string>', { fallback: '' })
     .option('timeout', '-t <timeout:number>', { fallback: 5 })
+    .option('instance', '-i <instance:string>', { fallback: '' })
     .action(async ({ session, options }, host) => {
       if (!host) {
         return '请提供服务器地址，例如：绑定+IP地址（不带端口时默认为25565）'
@@ -331,7 +329,7 @@ export function apply(ctx: Context, config: Config) {
       })
 
       if (existingServers.length > 0) {
-        return `该服务器 (${parsedHost}:${parsedPort}) 已在本群绑定，服务器ID为: ${existingServers[0].id}`
+        return `该服务器已在本群绑定，服务器ID为: ${existingServers[0].id}`
       }
 
       const createData: any = {
@@ -341,7 +339,7 @@ export function apply(ctx: Context, config: Config) {
         port: parsedPort,
         serverType: 'java',
         timeout: options.timeout,
-        minekuaiInstanceId: ''
+        minekuaiInstanceId: options.instance
       }
       if (options.name) {
         createData.name = options.name
@@ -352,7 +350,7 @@ export function apply(ctx: Context, config: Config) {
       const servers = await ctx.database.get('minecraft_server', { groupId })
       const newServer = servers[servers.length - 1]
 
-      return `✅ 服务器绑定成功！\n服务器ID: ${newServer.id}\n名称: ${newServer.name || 'Minecraft 服务器'}\n地址: ${parsedHost}:${parsedPort}`
+      return `✅ 服务器绑定成功！\n服务器ID: ${newServer.id}\n名称: ${newServer.name || 'Minecraft 服务器'}`
     })
 
   ctx.guild()
@@ -406,6 +404,7 @@ export function apply(ctx: Context, config: Config) {
     .command('mc/修改 <id:number>', '修改Minecraft服务器信息')
     .option('name', '-n <name:string>', { fallback: '' })
     .option('timeout', '-t <timeout:number>', { fallback: 0 })
+    .option('instance', '-i <instance:string>', { fallback: '' })
     .action(async ({ session, options }, id) => {
       if (!id) {
         return '请提供服务器ID，例如：修改 1'
@@ -427,9 +426,12 @@ export function apply(ctx: Context, config: Config) {
       if (options.timeout > 0) {
         updates.timeout = options.timeout
       }
+      if (options.instance) {
+        updates.minekuaiInstanceId = options.instance
+      }
 
       if (Object.keys(updates).length === 0) {
-        return '请提供要修改的参数，使用 -n 指定新名称，-t 指定新超时时间'
+        return '请提供要修改的参数，使用 -n 指定新名称，-t 指定新超时时间，-i 指定新麦块实例ID'
       }
 
       await ctx.database.set('minecraft_server', { id }, updates)
@@ -437,6 +439,7 @@ export function apply(ctx: Context, config: Config) {
       const parts = []
       if (updates.name) parts.push(`名称: ${updates.name}`)
       if (updates.timeout) parts.push(`超时: ${updates.timeout}秒`)
+      if (updates.minekuaiInstanceId) parts.push(`麦块实例ID: ${updates.minekuaiInstanceId}`)
 
       return `✅ 服务器信息已更新！\n${parts.join('\n')}`
     })
@@ -587,7 +590,9 @@ export function apply(ctx: Context, config: Config) {
       let message = `📋 本群已绑定 ${servers.length} 台服务器：\n\n`
       servers.forEach(server => {
         message += `[ID:${server.id}] ${server.name}\n`
-        message += `  地址: ${server.host}:${server.port}\n`
+        if (config.showIpInDetail) {
+          message += `  地址: ${server.host}:${server.port}\n`
+        }
         message += `  类型: ${server.serverType} | 超时: ${server.timeout}秒\n`
         if (server.minekuaiInstanceId) {
           message += `  麦块实例: ${server.minekuaiInstanceId}\n`
