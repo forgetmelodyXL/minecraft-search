@@ -21,6 +21,7 @@ export interface ServerConfig {
 export interface Config {
   servers: ServerConfig[]
   minekuaiSettings: MinekuaiSettings
+  showIpInDetail: boolean
 }
 
 // 麦块联机配置接口
@@ -46,7 +47,11 @@ export const Config: Schema<Config> = Schema.intersect([
       apiUrl: Schema.string().description('麦块API地址').default('https://minekuai.com/api/client'),
       apiKey: Schema.string().description('麦块API密钥'),
     })
-  }).description('麦块联机配置(可选)')
+  }).description('麦块联机配置(可选)'),
+
+  Schema.object({
+    showIpInDetail: Schema.boolean().default(true).description('在查询详细状态时显示服务器IP地址')
+  }).description('显示配置')
 ])
 
 export function apply(ctx: Context, config: Config) {
@@ -163,9 +168,13 @@ export function apply(ctx: Context, config: Config) {
   }
 
   // 格式化详细信息
-  function formatDetailedStatus(result: any, server: ServerConfig) {
+  function formatDetailedStatus(result: any, server: ServerConfig, showIp: boolean) {
     if (!result.online) {
-      return `🔴 服务器 ${server.name} (${server.host}) 当前离线`
+      if (showIp) {
+        return `🔴 服务器 ${server.name} (${server.host}) 当前离线`
+      } else {
+        return `🔴 服务器 ${server.name} 当前离线`
+      }
     }
 
     // 处理MOTD，将换行符替换为空格
@@ -192,11 +201,14 @@ export function apply(ctx: Context, config: Config) {
       motdText = descriptionStr.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim()
     }
 
-    const defaultPort = server.serverType === 'bedrock' ? 19132 : 25565
-    const { host, port } = parseServerAddress(server.host, defaultPort)
-
     let message = `🟢 ${server.name} 状态信息\n`
-    message += `📡 地址: ${host}:${port}\n`
+    
+    if (showIp) {
+      const defaultPort = server.serverType === 'bedrock' ? 19132 : 25565
+      const { host, port } = parseServerAddress(server.host, defaultPort)
+      message += `📡 地址: ${host}:${port}\n`
+    }
+    
     message += `🎮 类型: ${server.serverType || 'Java'}\n`
 
     if (result.version) {
@@ -265,7 +277,7 @@ export function apply(ctx: Context, config: Config) {
         return `🔴 服务器 ${server.name} - 离线 | 原因：${result.error}`
       }
 
-      return formatDetailedStatus(result.data, server)
+      return formatDetailedStatus(result.data, server, config.showIpInDetail)
     })
 
   // 原有的开服和重启指令（保持不变）
