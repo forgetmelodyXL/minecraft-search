@@ -397,7 +397,7 @@ export function apply(ctx: Context, config: Config) {
 
       await ctx.database.remove('minecraft_server', { id })
 
-      return `✅ 服务器 ${server.name} 已解绑`
+      return `✅ 服务器已解绑`
     })
 
   ctx.guild()
@@ -455,13 +455,13 @@ export function apply(ctx: Context, config: Config) {
       const server = servers.find(s => s.id === id)
 
       if (!server) return `❌ 未找到ID为 ${id} 的服务器，请确保操作的是本群绑定的服务器`
-      if (!server.minekuaiInstanceId) return `服务器 ${server.name} 未配置麦块实例ID`
+      if (!server.minekuaiInstanceId) return `${server.name} 未配置麦块实例ID`
 
       try {
         await minekuaiApiRequest(server.minekuaiInstanceId, 'start', groupId, 3)
-        return `✅ 已发送启动指令到服务器 ${server.name} (ID: ${id})`
+        return `✅ 已发送启动指令到 ${server.name} (ID: ${id})`
       } catch (error) {
-        return `❌ 启动服务器 ${server.name} 失败: ${error.message}`
+        return `❌ 启动服务器失败: ${error.message}`
       }
     })
 
@@ -476,13 +476,13 @@ export function apply(ctx: Context, config: Config) {
       const server = servers.find(s => s.id === id)
 
       if (!server) return `❌ 未找到ID为 ${id} 的服务器，请确保操作的是本群绑定的服务器`
-      if (!server.minekuaiInstanceId) return `服务器 ${server.name} 未配置麦块实例ID`
+      if (!server.minekuaiInstanceId) return `${server.name} 未配置麦块实例ID`
 
       try {
         await minekuaiApiRequest(server.minekuaiInstanceId, 'restart', groupId, 3)
-        return `✅ 服务器 ${server.name} 重启指令已发送完成，请稍后检查服务器状态`
+        return `✅ ${server.name} 重启指令已发送完成，请稍后检查服务器状态`
       } catch (error) {
-        return `❌ 重启服务器 ${server.name} 失败: ${error.message}`
+        return `❌ 重启服务器失败: ${error.message}`
       }
     })
 
@@ -497,7 +497,7 @@ export function apply(ctx: Context, config: Config) {
       const server = servers.find(s => s.id === id)
 
       if (!server) return `❌ 未找到ID为 ${id} 的服务器，请确保操作的是本群绑定的服务器`
-      if (!server.minekuaiInstanceId) return `服务器 ${server.name} 未配置麦块实例ID`
+      if (!server.minekuaiInstanceId) return `${server.name} 未配置麦块实例ID`
 
       try {
         await minekuaiApiRequest(server.minekuaiInstanceId, 'stop', groupId, 3)
@@ -506,9 +506,9 @@ export function apply(ctx: Context, config: Config) {
         await new Promise(resolve => setTimeout(resolve, 3000))
         await minekuaiApiRequest(server.minekuaiInstanceId, 'start', groupId, 3)
 
-        return `✅ 服务器 ${server.name} 强制重启指令已发送完成，请稍后检查服务器状态`
+        return `✅ ${server.name} 强制重启指令已发送完成，请稍后检查服务器状态`
       } catch (error) {
-        return `❌ 强制重启服务器 ${server.name} 失败: ${error.message}`
+        return `❌ 强制重启服务器失败: ${error.message}`
       }
     })
 
@@ -523,7 +523,7 @@ export function apply(ctx: Context, config: Config) {
       const server = servers.find(s => s.id === id)
 
       if (!server) return `❌ 未找到ID为 ${id} 的服务器，请确保操作的是本群绑定的服务器`
-      if (!server.minekuaiInstanceId) return `服务器 ${server.name} 未配置麦块实例ID`
+      if (!server.minekuaiInstanceId) return `${server.name} 未配置麦块实例ID`
 
       try {
         const apiKeys = await ctx.database.get('minecraft_api_key', { groupId })
@@ -572,7 +572,7 @@ export function apply(ctx: Context, config: Config) {
 
         return message
       } catch (error) {
-        return `❌ 查询服务器 ${server.name} 资源使用情况失败: ${error.message}`
+        return `❌ 查询服务器资源使用情况失败: ${error.message}`
       }
     })
 
@@ -621,6 +621,6 @@ export function apply(ctx: Context, config: Config) {
 
       await ctx.database.set('minecraft_server', { id }, { minekuaiInstanceId: instanceId })
 
-      return `✅ 服务器 ${server.name} 的麦块实例ID已设置为: ${instanceId}`
+      return `✅ ${server.name} 的麦块实例ID已设置为: ${instanceId}`
     })
 }
