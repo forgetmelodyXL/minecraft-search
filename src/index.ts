@@ -1,5 +1,5 @@
 import { Context, Schema } from 'koishi'
-// 动态导入 mc-server-util
+
 let getMinecraftServerStatus: any
 import('mc-server-util').then(m => {
   getMinecraftServerStatus = m.getMinecraftServerStatus
@@ -7,57 +7,78 @@ import('mc-server-util').then(m => {
 
 export const name = 'minecraft-search'
 
-// 服务器配置接口
 export interface ServerConfig {
   id: number
+  userId: string
+  groupId: string
   name: string
   host: string
+  port: number
+  serverType: 'java' | 'bedrock'
+  timeout: number
   minekuaiInstanceId?: string
-  // 查询配置
-  timeout?: number
-  serverType?: 'java' | 'bedrock'
+}
+
+export interface ApiKeyConfig {
+  id: number
+  userId: string
+  groupId: string
+  apiKey: string
 }
 
 export interface Config {
-  servers: ServerConfig[]
-  minekuaiSettings: MinekuaiSettings
+  minekuaiApiUrl: string
   showIpInDetail: boolean
-}
-
-// 麦块联机配置接口
-export interface MinekuaiSettings {
-  apiUrl: string
-  apiKey: string
 }
 
 export const Config: Schema<Config> = Schema.intersect([
   Schema.object({
-    servers: Schema.array(Schema.object({
-      id: Schema.number().required().description('服务器ID'),
-      name: Schema.string().required().description('服务器名称'),
-      host: Schema.string().required().description('服务器地址'),
-      serverType: Schema.union(['java', 'bedrock']).default('java').description('服务器类型'),
-      timeout: Schema.number().default(5.0).description('查询超时时间(秒)'),
-      minekuaiInstanceId: Schema.string().description('麦块实例ID (可选)'),
-    })).description('服务器列表').role('table').required()
-  }).description('服务器配置'),
-
-  Schema.object({
-    minekuaiSettings: Schema.object({
-      apiUrl: Schema.string().description('麦块API地址').default('https://minekuai.com/api/client'),
-      apiKey: Schema.string().description('麦块API密钥'),
-    })
-  }).description('麦块联机配置(可选)'),
+    minekuaiApiUrl: Schema.string().description('麦块API地址').default('https://minekuai.com/api/client'),
+  }).description('麦块联机配置'),
 
   Schema.object({
     showIpInDetail: Schema.boolean().default(true).description('在查询详细状态时显示服务器IP地址')
   }).description('显示配置')
 ])
 
+export const inject = {
+  required: ['database'],
+}
+
+declare module 'koishi' {
+  interface Tables {
+    minecraft_server: ServerConfig
+    minecraft_api_key: ApiKeyConfig
+  }
+}
+
 export function apply(ctx: Context, config: Config) {
-  // 解析服务器地址，分离host和port
+  ctx.model.extend('minecraft_server', {
+    id: 'unsigned',
+    userId: 'string',
+    groupId: 'string',
+    name: 'string',
+    host: 'string',
+    port: 'integer',
+    serverType: 'string',
+    timeout: 'float',
+    minekuaiInstanceId: 'string',
+  }, {
+    autoInc: true,
+    primary: 'id'
+  })
+
+  ctx.model.extend('minecraft_api_key', {
+    id: 'unsigned',
+    userId: 'string',
+    groupId: 'string',
+    apiKey: 'string',
+  }, {
+    autoInc: true,
+    primary: 'id'
+  })
+
   function parseServerAddress(hostString: string, defaultPort: number) {
-    // 检查是否包含端口号
     if (hostString.includes(':')) {
       const [host, portStr] = hostString.split(':')
       const port = parseInt(portStr)
@@ -72,16 +93,17 @@ export function apply(ctx: Context, config: Config) {
     }
   }
 
-  // 麦块API请求函数
-  async function minekuaiApiRequest(instanceId: string, operation: string, maxRetries = 3) {
-    const { apiUrl, apiKey } = config.minekuaiSettings
-    if (!apiKey) throw new Error('麦块API密钥未配置')
-    if (!apiUrl) throw new Error('麦块API地址未配置')
+  async function minekuaiApiRequest(instanceId: string, operation: string, groupId: string, maxRetries = 3) {
+    const apiKeys = await ctx.database.get('minecraft_api_key', { groupId })
+    if (!apiKeys || apiKeys.length === 0) {
+      throw new Error('本群未配置麦块API密钥，请先使用 绑定密钥 指令')
+    }
+    const apiKeyRecord = apiKeys[0]
 
-    const baseUrl = apiUrl.replace(/\/+$/, '')
+    const baseUrl = config.minekuaiApiUrl.replace(/\/+$/, '')
     const url = `${baseUrl}/servers/${instanceId}/power`
     const headers = {
-      'Authorization': `Bearer ${apiKey}`,
+      'Authorization': `Bearer ${apiKeyRecord.apiKey}`,
       'Content-Type': 'application/json',
       'Accept': 'application/json'
     }
@@ -104,22 +126,17 @@ export function apply(ctx: Context, config: Config) {
     throw new Error(`麦块API请求失败，已重试${maxRetries}次: ${lastError.message}`)
   }
 
-  // 查询单个服务器状态
   async function queryServerStatus(server: ServerConfig) {
     try {
-      // 确保 getMinecraftServerStatus 已经被导入
       if (!getMinecraftServerStatus) {
         throw new Error('mc-server-util 模块未正确加载')
       }
 
-      const defaultPort = server.serverType === 'bedrock' ? 19132 : 25565
-      const { host, port } = parseServerAddress(server.host, defaultPort)
-
-      const timeout = (server.timeout || 5.0) * 1000 // 转换为毫秒
+      const { host, port } = parseServerAddress(server.host, server.port || 25565)
+      const timeout = (server.timeout || 5.0) * 1000
 
       let result
       if (server.serverType === 'bedrock') {
-        // Bedrock版本暂时不支持，因为 mc-server-util 主要支持 Java 版本
         throw new Error('Bedrock服务器暂不支持')
       } else {
         result = await getMinecraftServerStatus(host, port, {
@@ -134,16 +151,13 @@ export function apply(ctx: Context, config: Config) {
         server: server
       }
     } catch (error) {
-      // 连接失败时显示具体错误原因，翻译成中文并移除IP
       let errorMessage = error instanceof Error ? error.message : String(error)
 
-      // 翻译常见错误信息
       errorMessage = errorMessage.replace(/connect ECONNREFUSED/i, '服务器已关闭')
       errorMessage = errorMessage.replace(/connect ETIMEDOUT/i, '网络波动，请稍后尝试')
       errorMessage = errorMessage.replace(/connect ENOTFOUND/i, '网络波动，请稍后尝试')
       errorMessage = errorMessage.replace(/getaddrinfo EAI_AGAIN/i, '网络波动，请稍后尝试')
-      
-      // 移除IP:端口和域名
+
       errorMessage = errorMessage.replace(/\s+(\d+\.\d+\.\d+\.\d+):\d+/, '')
       errorMessage = errorMessage.replace(/\s+[\w.-]+$/, '')
 
@@ -155,37 +169,37 @@ export function apply(ctx: Context, config: Config) {
     }
   }
 
-  // 格式化简短信息
+  function getServerName(server: ServerConfig) {
+    return server.name || 'Minecraft 服务器'
+  }
+
   function formatShortStatus(result: any, server: ServerConfig) {
+    const displayName = getServerName(server)
     if (!result.online) {
-      return `🔴 ${server.name} - 离线`
+      return `🔴 ${displayName} - 离线`
     }
 
     const players = result.players ? `${result.players.online}/${result.players.max}` : 'N/A'
     const version = result.version ? result.version.name : 'N/A'
 
-    return `🟢 ${server.name} - 在线 | 玩家: ${players} | 版本: ${version}`
+    return `🟢 ${displayName} - 在线 | 玩家: ${players} | 版本: ${version}`
   }
 
-  // 格式化详细信息
   function formatDetailedStatus(result: any, server: ServerConfig, showIp: boolean) {
+    const displayName = getServerName(server)
     if (!result.online) {
       if (showIp) {
-        return `🔴 服务器 ${server.name} (${server.host}) 当前离线`
+        return `🔴 ${displayName} (${server.host}) 当前离线`
       } else {
-        return `🔴 服务器 ${server.name} 当前离线`
+        return `🔴 ${displayName} 当前离线`
       }
     }
 
-    // 处理MOTD，将换行符替换为空格
     let motdText = '暂无描述'
     if (result.description) {
-      // 确保 description 是字符串
       let descriptionStr = result.description
       if (typeof descriptionStr !== 'string') {
-        // 如果是对象，尝试转换为字符串
         if (typeof descriptionStr === 'object' && descriptionStr !== null) {
-          // 检查是否有 text 属性（某些版本的 mc-server-util 可能返回对象）
           if (descriptionStr.text) {
             descriptionStr = descriptionStr.text
           } else {
@@ -195,20 +209,17 @@ export function apply(ctx: Context, config: Config) {
           descriptionStr = String(descriptionStr)
         }
       }
-      // 移除Minecraft颜色代码（§开头的代码）
       descriptionStr = descriptionStr.replace(/§[0-9a-fk-or]/gi, '')
-      // 替换所有换行符为空格，并去除多余空格
       motdText = descriptionStr.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim()
     }
 
-    let message = `🟢 ${server.name} 状态信息\n`
-    
+    let message = `🟢 ${displayName} 状态信息\n`
+
     if (showIp) {
-      const defaultPort = server.serverType === 'bedrock' ? 19132 : 25565
-      const { host, port } = parseServerAddress(server.host, defaultPort)
+      const { host, port } = parseServerAddress(server.host, server.port || 25565)
       message += `📡 地址: ${host}:${port}\n`
     }
-    
+
     message += `🎮 类型: ${server.serverType || 'Java'}\n`
 
     if (result.version) {
@@ -229,116 +240,268 @@ export function apply(ctx: Context, config: Config) {
     return message
   }
 
-  // 修改查服指令
-  ctx.command('mc/查服 [id:number]', '查询Minecraft服务器状态')
-    .action(async ({ session }, id) => {
-      // 不带参数：查询全部服务器
-      if (id === undefined) {
-        if (config.servers.length === 0) {
-          return '❌ 未配置任何服务器'
+  ctx.command('mc/查服 [target:text]', '查询Minecraft服务器状态')
+    .action(async ({ session }, target) => {
+      const servers = await ctx.database.get('minecraft_server', {})
+
+      if (target === undefined) {
+        if (servers.length === 0) {
+          return '❌ 本群未绑定任何服务器，请先使用 绑定 指令'
         }
 
-        // 同步查询所有服务器
-        const queries = config.servers.map(server => queryServerStatus(server))
+        const queries = servers.map(server => queryServerStatus(server))
         const results = await Promise.all(queries)
 
-        // 计算在线服务器数量
         const onlineCount = results.filter(r => r.success && r.data && r.data.online).length
 
         let message = `📊 服务器状态汇总 (当前在线${onlineCount}/${results.length}台)\n\n`
         results.forEach((result) => {
-          // 使用服务器配置中的ID，而不是数组索引
           const serverId = result.server.id
           if (result.success) {
-            // 直接获取完整的格式化状态，在前面添加服务器ID
             const originalStatus = formatShortStatus(result.data, result.server)
             message += `[ID:${serverId}] ${originalStatus}\n`
           } else {
-            // 显示具体错误原因
-            message += `[ID:${serverId}] 🔴 ${result.server.name} - 离线 | 原因：${result.error}\n`
+            message += `[ID:${serverId}] 🔴 ${getServerName(result.server)} - 离线 | 原因：${result.error}\n`
           }
         })
 
-        // 更新提示信息
-        message += `\n💡 输入"查服+服务器ID"即可查询详细状态，例如：查服 ${config.servers[0]?.id || 1}`
+        message += `\n💡 输入"查服+服务器ID"即可查询详细状态，例如：查服 ${servers[0]?.id || 1}`
+        message += `\n💡 也可以直接输入IP地址查询`
 
         return message
       }
 
-      // 带参数：查询指定服务器
-      const server = config.servers.find(s => s.id === id)
+      // 尝试作为数字ID处理
+      const id = parseInt(target)
+      if (!isNaN(id)) {
+        const server = servers.find(s => s.id === id)
+        if (server) {
+          const result = await queryServerStatus(server)
+          if (!result.success) {
+            return `🔴 ${getServerName(server)} - 离线 | 原因：${result.error}`
+          }
+          return formatDetailedStatus(result.data, server, config.showIpInDetail)
+        }
+      }
+
+      // 作为IP地址处理
+      const host = String(target)
+      const defaultPort = 25565
+      const { host: parsedHost, port: parsedPort } = parseServerAddress(host, defaultPort)
+      
+      // 创建临时服务器配置
+      const tempServer: ServerConfig = {
+        id: 0,
+        userId: session.userId,
+        groupId: session.guildId || '',
+        name: parsedHost,
+        host: parsedHost,
+        port: parsedPort,
+        serverType: 'java',
+        timeout: 5.0
+      }
+
+      const result = await queryServerStatus(tempServer)
+      if (!result.success) {
+        return `🔴 服务器 ${parsedHost}:${parsedPort} - 离线 | 原因：${result.error}`
+      }
+
+      return formatDetailedStatus(result.data, tempServer, config.showIpInDetail)
+    })
+
+  ctx.guild()
+    .command('mc/绑定 <host:string>', '绑定Minecraft服务器')
+    .option('name', '-n <name:string>', { fallback: '' })
+    .option('timeout', '-t <timeout:number>', { fallback: 5 })
+    .action(async ({ session, options }, host) => {
+      if (!host) {
+        return '请提供服务器地址，例如：绑定+IP地址（不带端口时默认为25565）'
+      }
+
+      const groupId = session.guildId
+      const userId = session.userId
+
+      const defaultPort = 25565
+      const { host: parsedHost, port: parsedPort } = parseServerAddress(host, defaultPort)
+
+      const existingServers = await ctx.database.get('minecraft_server', {
+        groupId,
+        host: parsedHost,
+        port: parsedPort
+      })
+
+      if (existingServers.length > 0) {
+        return `该服务器 (${parsedHost}:${parsedPort}) 已在本群绑定，服务器ID为: ${existingServers[0].id}`
+      }
+
+      const createData: any = {
+        userId,
+        groupId,
+        host: parsedHost,
+        port: parsedPort,
+        serverType: 'java',
+        timeout: options.timeout,
+        minekuaiInstanceId: ''
+      }
+      if (options.name) {
+        createData.name = options.name
+      }
+
+      await ctx.database.create('minecraft_server', createData)
+
+      const servers = await ctx.database.get('minecraft_server', { groupId })
+      const newServer = servers[servers.length - 1]
+
+      return `✅ 服务器绑定成功！\n服务器ID: ${newServer.id}\n名称: ${newServer.name || 'Minecraft 服务器'}\n地址: ${parsedHost}:${parsedPort}`
+    })
+
+  ctx.guild()
+    .command('mc/绑定密钥 <apiKey:string>', '绑定麦块API密钥')
+    .action(async ({ session }, apiKey) => {
+      if (!apiKey) {
+        return '请提供API密钥'
+      }
+
+      const groupId = session.guildId
+      const userId = session.userId
+
+      const existingKeys = await ctx.database.get('minecraft_api_key', { groupId })
+
+      if (existingKeys.length > 0) {
+        await ctx.database.set('minecraft_api_key', { groupId }, { apiKey })
+        return '✅ API密钥更新成功！'
+      }
+
+      await ctx.database.create('minecraft_api_key', {
+        userId,
+        groupId,
+        apiKey
+      })
+
+      return '✅ API密钥绑定成功！'
+    })
+
+  ctx.guild()
+    .command('mc/解绑 <id:number>', '解绑Minecraft服务器')
+    .action(async ({ session }, id) => {
+      if (!id) {
+        return '请提供服务器ID，例如：解绑 1'
+      }
+
+      const groupId = session.guildId
+
+      const servers = await ctx.database.get('minecraft_server', { groupId })
+      const server = servers.find(s => s.id === id)
+
       if (!server) {
         return `❌ 未找到ID为 ${id} 的服务器`
       }
 
-      const result = await queryServerStatus(server)
-      if (!result.success) {
-        // 显示具体错误原因
-        return `🔴 服务器 ${server.name} - 离线 | 原因：${result.error}`
-      }
+      await ctx.database.remove('minecraft_server', { id })
 
-      return formatDetailedStatus(result.data, server, config.showIpInDetail)
+      return `✅ 服务器 ${server.name} 已解绑`
     })
 
-  // 原有的开服和重启指令（保持不变）
-  ctx.command('mc/开服 <id:number>', '启动麦块服务器')
+  ctx.guild()
+    .command('mc/修改 <id:number>', '修改Minecraft服务器信息')
+    .option('name', '-n <name:string>', { fallback: '' })
+    .option('timeout', '-t <timeout:number>', { fallback: 0 })
+    .action(async ({ session, options }, id) => {
+      if (!id) {
+        return '请提供服务器ID，例如：修改 1'
+      }
+
+      const groupId = session.guildId
+
+      const servers = await ctx.database.get('minecraft_server', { groupId })
+      const server = servers.find(s => s.id === id)
+
+      if (!server) {
+        return `❌ 未找到ID为 ${id} 的服务器`
+      }
+
+      const updates: any = {}
+      if (options.name) {
+        updates.name = options.name
+      }
+      if (options.timeout > 0) {
+        updates.timeout = options.timeout
+      }
+
+      if (Object.keys(updates).length === 0) {
+        return '请提供要修改的参数，使用 -n 指定新名称，-t 指定新超时时间'
+      }
+
+      await ctx.database.set('minecraft_server', { id }, updates)
+
+      const parts = []
+      if (updates.name) parts.push(`名称: ${updates.name}`)
+      if (updates.timeout) parts.push(`超时: ${updates.timeout}秒`)
+
+      return `✅ 服务器信息已更新！\n${parts.join('\n')}`
+    })
+
+  ctx.guild()
+    .command('mc/开服 <id:number>', '启动麦块服务器')
     .action(async ({ session }, id) => {
       if (!id) return '请提供服务器ID，例如：开服 1'
 
-      const server = config.servers.find(s => s.id === id)
-      if (!server) return `未找到ID为 ${id} 的服务器`
+      const groupId = session.guildId
+
+      const servers = await ctx.database.get('minecraft_server', { groupId })
+      const server = servers.find(s => s.id === id)
+
+      if (!server) return `❌ 未找到ID为 ${id} 的服务器，请确保操作的是本群绑定的服务器`
       if (!server.minekuaiInstanceId) return `服务器 ${server.name} 未配置麦块实例ID`
 
       try {
-        await minekuaiApiRequest(server.minekuaiInstanceId, 'start', 3)
+        await minekuaiApiRequest(server.minekuaiInstanceId, 'start', groupId, 3)
         return `✅ 已发送启动指令到服务器 ${server.name} (ID: ${id})`
       } catch (error) {
         return `❌ 启动服务器 ${server.name} 失败: ${error.message}`
       }
     })
 
-  ctx.command('mc/重启 <id:number>', '重启麦块服务器')
+  ctx.guild()
+    .command('mc/重启 <id:number>', '重启麦块服务器')
     .action(async ({ session }, id) => {
       if (!id) return '请提供服务器ID，例如：重启 1'
 
-      const server = config.servers.find(s => s.id === id)
-      if (!server) return `未找到ID为 ${id} 的服务器`
+      const groupId = session.guildId
+
+      const servers = await ctx.database.get('minecraft_server', { groupId })
+      const server = servers.find(s => s.id === id)
+
+      if (!server) return `❌ 未找到ID为 ${id} 的服务器，请确保操作的是本群绑定的服务器`
       if (!server.minekuaiInstanceId) return `服务器 ${server.name} 未配置麦块实例ID`
 
       try {
-        await minekuaiApiRequest(server.minekuaiInstanceId, 'restart', 3)
+        await minekuaiApiRequest(server.minekuaiInstanceId, 'restart', groupId, 3)
         return `✅ 服务器 ${server.name} 重启指令已发送完成，请稍后检查服务器状态`
       } catch (error) {
         return `❌ 重启服务器 ${server.name} 失败: ${error.message}`
       }
     })
 
-  ctx.command('mc/强制重启 <id:number>', '强制重启麦块服务器')
+  ctx.guild()
+    .command('mc/强制重启 <id:number>', '强制重启麦块服务器')
     .action(async ({ session }, id) => {
       if (!id) return '请提供服务器ID，例如：强制重启 1'
 
-      const server = config.servers.find(s => s.id === id)
-      if (!server) return `未找到ID为 ${id} 的服务器`
+      const groupId = session.guildId
+
+      const servers = await ctx.database.get('minecraft_server', { groupId })
+      const server = servers.find(s => s.id === id)
+
+      if (!server) return `❌ 未找到ID为 ${id} 的服务器，请确保操作的是本群绑定的服务器`
       if (!server.minekuaiInstanceId) return `服务器 ${server.name} 未配置麦块实例ID`
 
       try {
-        // 第一步：发送停止指令
-        //session.send(`🔄 正在停止服务器 ${server.name}...`)
-        await minekuaiApiRequest(server.minekuaiInstanceId, 'stop', 3)
-
-        // 等待1秒
+        await minekuaiApiRequest(server.minekuaiInstanceId, 'stop', groupId, 3)
         await new Promise(resolve => setTimeout(resolve, 1000))
-
-        // 第二步：发送强制停止指令
-        //session.send(`⏹️ 正在强制停止服务器 ${server.name}...`)
-        await minekuaiApiRequest(server.minekuaiInstanceId, 'kill', 3)
-
-        // 等待3秒
+        await minekuaiApiRequest(server.minekuaiInstanceId, 'kill', groupId, 3)
         await new Promise(resolve => setTimeout(resolve, 3000))
-
-        // 第三步：发送启动指令
-        //session.send(`🚀 正在启动服务器 ${server.name}...`)
-        await minekuaiApiRequest(server.minekuaiInstanceId, 'start', 3)
+        await minekuaiApiRequest(server.minekuaiInstanceId, 'start', groupId, 3)
 
         return `✅ 服务器 ${server.name} 强制重启指令已发送完成，请稍后检查服务器状态`
       } catch (error) {
@@ -346,24 +509,30 @@ export function apply(ctx: Context, config: Config) {
       }
     })
 
-  // 新增：查看服务器资源使用情况
-  ctx.command('mc/资源 <id:number>', '查看麦块服务器资源使用情况')
+  ctx.guild()
+    .command('mc/资源 <id:number>', '查看麦块服务器资源使用情况')
     .action(async ({ session }, id) => {
       if (!id) return '请提供服务器ID，例如：资源 1'
 
-      const server = config.servers.find(s => s.id === id)
-      if (!server) return `未找到ID为 ${id} 的服务器`
+      const groupId = session.guildId
+
+      const servers = await ctx.database.get('minecraft_server', { groupId })
+      const server = servers.find(s => s.id === id)
+
+      if (!server) return `❌ 未找到ID为 ${id} 的服务器，请确保操作的是本群绑定的服务器`
       if (!server.minekuaiInstanceId) return `服务器 ${server.name} 未配置麦块实例ID`
 
       try {
-        const { apiUrl, apiKey } = config.minekuaiSettings
-        if (!apiKey) throw new Error('麦块API密钥未配置')
-        if (!apiUrl) throw new Error('麦块API地址未配置')
+        const apiKeys = await ctx.database.get('minecraft_api_key', { groupId })
+        if (!apiKeys || apiKeys.length === 0) {
+          throw new Error('本群未配置麦块API密钥，请先使用 绑定密钥 指令')
+        }
+        const apiKeyRecord = apiKeys[0]
 
-        const baseUrl = apiUrl.replace(/\/+$/, '')
+        const baseUrl = config.minekuaiApiUrl.replace(/\/+$/, '')
         const url = `${baseUrl}/servers/${server.minekuaiInstanceId}/resources`
         const headers = {
-          'Authorization': `Bearer ${apiKey}`,
+          'Authorization': `Bearer ${apiKeyRecord.apiKey}`,
           'Content-Type': 'application/json',
           'Accept': 'application/json'
         }
@@ -371,26 +540,22 @@ export function apply(ctx: Context, config: Config) {
         const response = await ctx.http.get(url, { headers })
         ctx.logger.info(`麦块API资源查询成功: 实例 ${server.minekuaiInstanceId}`)
 
-        // 解析API返回结构
         const attributes = response.attributes
         const resources = attributes.resources
         const currentState = attributes.current_state
         const isSuspended = attributes.is_suspended
 
-        // 计算资源使用情况
-        const memoryUsed = resources.memory_bytes / 1024 / 1024 / 1024 // 转换为GB
+        const memoryUsed = resources.memory_bytes / 1024 / 1024 / 1024
         const cpuUsage = resources.cpu_absolute
-        const diskUsed = resources.disk_bytes / 1024 / 1024 / 1024 // 转换为GB
-        const uptime = resources.uptime // 秒
+        const diskUsed = resources.disk_bytes / 1024 / 1024 / 1024
+        const uptime = resources.uptime
 
-        // 格式化运行时间
         const uptimeDays = Math.floor(uptime / 86400)
         const uptimeHours = Math.floor((uptime % 86400) / 3600)
         const uptimeMinutes = Math.floor((uptime % 3600) / 60)
         const uptimeSeconds = uptime % 60
         const formattedUptime = `${uptimeDays}天 ${uptimeHours}小时 ${uptimeMinutes}分钟 ${uptimeSeconds}秒`
 
-        // 格式化资源使用情况
         let message = `📊 ${server.name} 资源使用情况\n`
         message += `📋 状态: ${currentState === 'running' ? '运行中' : currentState}\n`
         message += `🔄 暂停: ${isSuspended ? '是' : '否'}\n`
@@ -406,5 +571,51 @@ export function apply(ctx: Context, config: Config) {
       } catch (error) {
         return `❌ 查询服务器 ${server.name} 资源使用情况失败: ${error.message}`
       }
+    })
+
+  ctx.guild()
+    .command('mc/服务器列表', '查看已绑定的服务器列表')
+    .action(async ({ session }) => {
+      const groupId = session.guildId
+
+      const servers = await ctx.database.get('minecraft_server', { groupId })
+
+      if (servers.length === 0) {
+        return '本群暂未绑定任何服务器'
+      }
+
+      let message = `📋 本群已绑定 ${servers.length} 台服务器：\n\n`
+      servers.forEach(server => {
+        message += `[ID:${server.id}] ${server.name}\n`
+        message += `  地址: ${server.host}:${server.port}\n`
+        message += `  类型: ${server.serverType} | 超时: ${server.timeout}秒\n`
+        if (server.minekuaiInstanceId) {
+          message += `  麦块实例: ${server.minekuaiInstanceId}\n`
+        }
+        message += '\n'
+      })
+
+      return message.trim()
+    })
+
+  ctx.guild()
+    .command('mc/设置实例 <id:number> <instanceId:string>', '设置服务器的麦块实例ID')
+    .action(async ({ session }, id, instanceId) => {
+      if (!id || !instanceId) {
+        return '请提供服务器ID和实例ID，例如：设置实例 1 abc123'
+      }
+
+      const groupId = session.guildId
+
+      const servers = await ctx.database.get('minecraft_server', { groupId })
+      const server = servers.find(s => s.id === id)
+
+      if (!server) {
+        return `❌ 未找到ID为 ${id} 的服务器`
+      }
+
+      await ctx.database.set('minecraft_server', { id }, { minekuaiInstanceId: instanceId })
+
+      return `✅ 服务器 ${server.name} 的麦块实例ID已设置为: ${instanceId}`
     })
 }
