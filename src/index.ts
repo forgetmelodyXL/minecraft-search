@@ -43,9 +43,9 @@ export const Config: Schema<Config> = Schema.intersect([
   }).description('显示配置'),
 
   Schema.object({
-    enablePermissionCheck: Schema.boolean().default(true).description('启用管理员权限检查（仅限onebot机器人使用）'),
-    allowMemberPowerCommands: Schema.boolean().default(false).description('允许普通成员使用开服、重启、强制重启指令（仅限onebot机器人使用）')
-  }).description('权限配置')
+    enablePermissionCheck: Schema.boolean().default(false).description('启用管理员权限检查'),
+    allowMemberPowerCommands: Schema.boolean().default(true).description('允许普通成员使用开服、重启、强制重启指令')
+  }).description('权限配置（仅限onebot机器人使用）')
 ])
 
 export const inject = {

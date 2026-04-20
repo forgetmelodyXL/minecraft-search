@@ -54,8 +54,8 @@ npm install koishi-plugin-minecraft-search
 {
   "minekuaiApiUrl": "https://minekuai.com/api/client", // 麦块API地址
   "showIpInDetail": true, // 是否在详细状态中显示IP地址
-  "enablePermissionCheck": true, // 启用管理员权限检查（仅限onebot机器人使用）
-  "allowMemberPowerCommands": false // 允许普通成员使用开服、重启、强制重启指令（仅限onebot机器人使用）
+  "enablePermissionCheck": false, // 启用管理员权限检查
+  "allowMemberPowerCommands": true // 允许普通成员使用开服、重启、强制重启指令
 }
 ```
 
@@ -155,7 +155,7 @@ mc/资源 1      # 查看ID为1的麦块服务器资源使用情况
 - ⚡ **高性能查询**：支持并行查询多个服务器
 - 🛡️ **错误处理**：完善的错误处理和用户提示
 - 🗄️ **数据库存储**：使用数据库存储服务器配置，支持多群组管理
-- 🔒 **权限控制**：支持全局权限管理，每个群组只能管理自己绑定的服务器，可控制普通成员使用电源指令的权限
+- 🔒 **权限控制**：支持全局权限管理，每个群组只能管理自己绑定的服务器，默认允许普通成员使用电源指令（可通过配置项调整）
 - 🌐 **直接IP查询**：支持直接输入IP地址查询服务器状态
 - 🔧 **实例ID管理**：支持在绑定和修改服务器时直接设置麦块实例ID
 
@@ -185,6 +185,10 @@ mc/资源 1      # 查看ID为1的麦块服务器资源使用情况
 ## 更新日志
 <details>
 <summary>点我查看更新日志详情</summary>
+
+### v2.0.5
+- 调整权限检查配置项默认值：`enablePermissionCheck` 默认值改为 false，`allowMemberPowerCommands` 默认值改为 true
+- 优化权限配置项的描述，明确权限配置仅适用于onebot机器人
 
 ### v2.0.4
 - 简化权限检查功能，移除群组级别的权限设置
