@@ -24,7 +24,6 @@ export interface ApiKeyConfig {
   userId: string
   groupId: string
   apiKey: string
-  allowMemberPowerCommands: boolean
 }
 
 export interface Config {
@@ -44,8 +43,8 @@ export const Config: Schema<Config> = Schema.intersect([
   }).description('显示配置'),
 
   Schema.object({
-    enablePermissionCheck: Schema.boolean().default(true).description('启用权限检查'),
-    allowMemberPowerCommands: Schema.boolean().default(false).description('允许普通成员使用开服、重启、强制重启指令')
+    enablePermissionCheck: Schema.boolean().default(true).description('启用管理员权限检查（仅限onebot机器人使用）'),
+    allowMemberPowerCommands: Schema.boolean().default(false).description('允许普通成员使用开服、重启、强制重启指令（仅限onebot机器人使用）')
   }).description('权限配置')
 ])
 
@@ -81,7 +80,6 @@ export function apply(ctx: Context, config: Config) {
     userId: 'string',
     groupId: 'string',
     apiKey: 'string',
-    allowMemberPowerCommands: 'boolean',
   }, {
     autoInc: true,
     primary: 'id'
@@ -188,17 +186,8 @@ export function apply(ctx: Context, config: Config) {
       return null
     }
 
-    if (isPowerCommand) {
-      if (config.allowMemberPowerCommands) {
-        const groupId = session.guildId
-        const apiKeys = await ctx.database.get('minecraft_api_key', { groupId })
-        if (apiKeys && apiKeys.length > 0) {
-          const groupConfig = apiKeys[0]
-          if (groupConfig.allowMemberPowerCommands) {
-            return null
-          }
-        }
-      }
+    if (isPowerCommand && config.allowMemberPowerCommands) {
+      return null
     }
 
     const memberInfo = session.event?.member?.roles
@@ -272,7 +261,8 @@ export function apply(ctx: Context, config: Config) {
     return message
   }
 
-  ctx.command('mc/查服 [target:text]', '查询Minecraft服务器状态')
+  ctx.guild()
+    .command('mc/查服 [target:text]', '查询Minecraft服务器状态')
     .action(async ({ session }, target) => {
       const servers = await ctx.database.get('minecraft_server', {})
 
@@ -697,29 +687,5 @@ export function apply(ctx: Context, config: Config) {
       await ctx.database.set('minecraft_server', { id }, { minekuaiInstanceId: instanceId })
 
       return `✅ ${server.name} 的麦块实例ID已设置为: ${instanceId}`
-    })
-
-  ctx.guild()
-    .command('mc/权限设置 <enabled:boolean>', '开启/关闭普通群成员使用开服、重启和强制重启指令')
-    .action(async ({ session }, enabled) => {
-      const permissionError = await checkPermission(session, config)
-      if (permissionError) {
-        return permissionError
-      }
-
-      if (!config.allowMemberPowerCommands) {
-        return '❌ 请先在插件配置中开启「允许普通成员使用开服、重启、强制重启指令」选项'
-      }
-
-      const groupId = session.guildId
-      const apiKeys = await ctx.database.get('minecraft_api_key', { groupId })
-
-      if (!apiKeys || apiKeys.length === 0) {
-        return '❌ 本群未配置麦块API密钥，请先使用 绑定密钥 指令'
-      }
-
-      await ctx.database.set('minecraft_api_key', { groupId }, { allowMemberPowerCommands: enabled })
-
-      return `✅ 已${enabled ? '开启' : '关闭'}普通群成员使用开服、重启和强制重启指令的权限`
     })
 }
