@@ -24,11 +24,14 @@ export interface ApiKeyConfig {
   userId: string
   groupId: string
   apiKey: string
+  allowMemberPowerCommands: boolean
 }
 
 export interface Config {
   minekuaiApiUrl: string
   showIpInDetail: boolean
+  enablePermissionCheck: boolean
+  allowMemberPowerCommands: boolean
 }
 
 export const Config: Schema<Config> = Schema.intersect([
@@ -38,7 +41,12 @@ export const Config: Schema<Config> = Schema.intersect([
 
   Schema.object({
     showIpInDetail: Schema.boolean().default(true).description('在查询详细状态时显示服务器IP地址')
-  }).description('显示配置')
+  }).description('显示配置'),
+
+  Schema.object({
+    enablePermissionCheck: Schema.boolean().default(true).description('启用权限检查'),
+    allowMemberPowerCommands: Schema.boolean().default(false).description('允许普通成员使用开服、重启、强制重启指令')
+  }).description('权限配置')
 ])
 
 export const inject = {
@@ -73,6 +81,7 @@ export function apply(ctx: Context, config: Config) {
     userId: 'string',
     groupId: 'string',
     apiKey: 'string',
+    allowMemberPowerCommands: 'boolean',
   }, {
     autoInc: true,
     primary: 'id'
@@ -172,6 +181,32 @@ export function apply(ctx: Context, config: Config) {
 
   function getServerName(server: ServerConfig) {
     return server.name || 'Minecraft 服务器'
+  }
+
+  async function checkPermission(session: any, config: Config, isPowerCommand = false): Promise<string | null> {
+    if (!config.enablePermissionCheck) {
+      return null
+    }
+
+    if (isPowerCommand) {
+      if (config.allowMemberPowerCommands) {
+        const groupId = session.guildId
+        const apiKeys = await ctx.database.get('minecraft_api_key', { groupId })
+        if (apiKeys && apiKeys.length > 0) {
+          const groupConfig = apiKeys[0]
+          if (groupConfig.allowMemberPowerCommands) {
+            return null
+          }
+        }
+      }
+    }
+
+    const memberInfo = session.event?.member?.roles
+    if (!memberInfo || !memberInfo.some((role: any) => role.name === "admin" || role.name === "owner" || role.id === "admin" || role.id === "owner")) {
+      return "❌ 仅限管理员和群主使用该指令。"
+    }
+
+    return null
   }
 
   function formatShortStatus(result: any, server: ServerConfig) {
@@ -312,6 +347,11 @@ export function apply(ctx: Context, config: Config) {
     .option('timeout', '-t <timeout:number>', { fallback: 5 })
     .option('instance', '-i <instance:string>', { fallback: '' })
     .action(async ({ session, options }, host) => {
+      const permissionError = await checkPermission(session, config)
+      if (permissionError) {
+        return permissionError
+      }
+
       if (!host) {
         return '请提供服务器地址，例如：绑定+IP地址（不带端口时默认为25565）'
       }
@@ -356,6 +396,11 @@ export function apply(ctx: Context, config: Config) {
   ctx.guild()
     .command('mc/绑定密钥 <apiKey:string>', '绑定麦块API密钥')
     .action(async ({ session }, apiKey) => {
+      const permissionError = await checkPermission(session, config)
+      if (permissionError) {
+        return permissionError
+      }
+
       if (!apiKey) {
         return '请提供API密钥'
       }
@@ -382,6 +427,11 @@ export function apply(ctx: Context, config: Config) {
   ctx.guild()
     .command('mc/解绑 <id:number>', '解绑Minecraft服务器')
     .action(async ({ session }, id) => {
+      const permissionError = await checkPermission(session, config)
+      if (permissionError) {
+        return permissionError
+      }
+
       if (!id) {
         return '请提供服务器ID，例如：解绑 1'
       }
@@ -406,6 +456,11 @@ export function apply(ctx: Context, config: Config) {
     .option('timeout', '-t <timeout:number>', { fallback: 0 })
     .option('instance', '-i <instance:string>', { fallback: '' })
     .action(async ({ session, options }, id) => {
+      const permissionError = await checkPermission(session, config)
+      if (permissionError) {
+        return permissionError
+      }
+
       if (!id) {
         return '请提供服务器ID，例如：修改 1'
       }
@@ -447,6 +502,11 @@ export function apply(ctx: Context, config: Config) {
   ctx.guild()
     .command('mc/开服 <id:number>', '启动麦块服务器')
     .action(async ({ session }, id) => {
+      const permissionError = await checkPermission(session, config, true)
+      if (permissionError) {
+        return permissionError
+      }
+
       if (!id) return '请提供服务器ID，例如：开服 1'
 
       const groupId = session.guildId
@@ -468,6 +528,11 @@ export function apply(ctx: Context, config: Config) {
   ctx.guild()
     .command('mc/重启 <id:number>', '重启麦块服务器')
     .action(async ({ session }, id) => {
+      const permissionError = await checkPermission(session, config, true)
+      if (permissionError) {
+        return permissionError
+      }
+
       if (!id) return '请提供服务器ID，例如：重启 1'
 
       const groupId = session.guildId
@@ -489,6 +554,11 @@ export function apply(ctx: Context, config: Config) {
   ctx.guild()
     .command('mc/强制重启 <id:number>', '强制重启麦块服务器')
     .action(async ({ session }, id) => {
+      const permissionError = await checkPermission(session, config, true)
+      if (permissionError) {
+        return permissionError
+      }
+
       if (!id) return '请提供服务器ID，例如：强制重启 1'
 
       const groupId = session.guildId
@@ -606,6 +676,11 @@ export function apply(ctx: Context, config: Config) {
   ctx.guild()
     .command('mc/设置实例 <id:number> <instanceId:string>', '设置服务器的麦块实例ID')
     .action(async ({ session }, id, instanceId) => {
+      const permissionError = await checkPermission(session, config)
+      if (permissionError) {
+        return permissionError
+      }
+
       if (!id || !instanceId) {
         return '请提供服务器ID和实例ID，例如：设置实例 1 abc123'
       }
@@ -622,5 +697,29 @@ export function apply(ctx: Context, config: Config) {
       await ctx.database.set('minecraft_server', { id }, { minekuaiInstanceId: instanceId })
 
       return `✅ ${server.name} 的麦块实例ID已设置为: ${instanceId}`
+    })
+
+  ctx.guild()
+    .command('mc/权限设置 <enabled:boolean>', '开启/关闭普通群成员使用开服、重启和强制重启指令')
+    .action(async ({ session }, enabled) => {
+      const permissionError = await checkPermission(session, config)
+      if (permissionError) {
+        return permissionError
+      }
+
+      if (!config.allowMemberPowerCommands) {
+        return '❌ 请先在插件配置中开启「允许普通成员使用开服、重启、强制重启指令」选项'
+      }
+
+      const groupId = session.guildId
+      const apiKeys = await ctx.database.get('minecraft_api_key', { groupId })
+
+      if (!apiKeys || apiKeys.length === 0) {
+        return '❌ 本群未配置麦块API密钥，请先使用 绑定密钥 指令'
+      }
+
+      await ctx.database.set('minecraft_api_key', { groupId }, { allowMemberPowerCommands: enabled })
+
+      return `✅ 已${enabled ? '开启' : '关闭'}普通群成员使用开服、重启和强制重启指令的权限`
     })
 }
