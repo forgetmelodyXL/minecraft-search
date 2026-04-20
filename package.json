@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-minecraft-search",
-  "description": "使用API查询基础的mc服务器信息",
-  "version": "2.0.5",
+  "description": "用于查询Minecraft服务器状态。如果服务器来自于麦块联机，那么可以查询指定服务器的详细资源使用情况，甚至还能对指定服务器进行电源开启或重启操作",
+  "version": "2.0.6",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "files": [
