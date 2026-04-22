@@ -332,7 +332,7 @@ export function apply(ctx: Context, config: Config) {
     })
 
   ctx.guild()
-    .command('mc/绑定 <host:string>', '绑定Minecraft服务器')
+    .command('mc/绑定服务器 <host:string>', '绑定Minecraft服务器')
     .option('name', '-n <name:string>', { fallback: '' })
     .option('timeout', '-t <timeout:number>', { fallback: 5 })
     .option('instance', '-i <instance:string>', { fallback: '' })
@@ -343,7 +343,7 @@ export function apply(ctx: Context, config: Config) {
       }
 
       if (!host) {
-        return '请提供服务器地址，例如：绑定+IP地址（不带端口时默认为25565）'
+        return '请提供服务器地址，例如：绑定服务器+IP地址（不带端口时默认为25565）'
       }
 
       const groupId = session.guildId
@@ -415,7 +415,7 @@ export function apply(ctx: Context, config: Config) {
     })
 
   ctx.guild()
-    .command('mc/解绑 <id:number>', '解绑Minecraft服务器')
+    .command('mc/解绑服务器 <id:number>', '解绑Minecraft服务器')
     .action(async ({ session }, id) => {
       const permissionError = await checkPermission(session, config)
       if (permissionError) {
@@ -423,7 +423,7 @@ export function apply(ctx: Context, config: Config) {
       }
 
       if (!id) {
-        return '请提供服务器ID，例如：解绑 1'
+        return '请提供服务器ID，例如：解绑服务器 1'
       }
 
       const groupId = session.guildId
@@ -441,7 +441,7 @@ export function apply(ctx: Context, config: Config) {
     })
 
   ctx.guild()
-    .command('mc/修改 <id:number>', '修改Minecraft服务器信息')
+    .command('mc/修改服务器 <id:number>', '修改Minecraft服务器信息')
     .option('name', '-n <name:string>', { fallback: '' })
     .option('timeout', '-t <timeout:number>', { fallback: 0 })
     .option('instance', '-i <instance:string>', { fallback: '' })
@@ -452,7 +452,7 @@ export function apply(ctx: Context, config: Config) {
       }
 
       if (!id) {
-        return '请提供服务器ID，例如：修改 1'
+        return '请提供服务器ID，例如：修改服务器 1'
       }
 
       const groupId = session.guildId

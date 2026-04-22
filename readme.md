@@ -63,12 +63,12 @@ npm install koishi-plugin-minecraft-search
 
 ### 服务器管理
 ```
-mc/绑定 <host> [-n <name>] [-t <timeout>] [-i <instance>]  # 绑定服务器，支持指定名称、超时时间和麦块实例ID
-mc/解绑 <id>                               # 解绑服务器
-mc/修改 <id> [-n <name>] [-t <timeout>] [-i <instance>]    # 修改服务器信息，支持修改名称、超时时间和麦块实例ID
+mc/绑定服务器 <host> [-n <name>] [-t <timeout>] [-i <instance>]  # 绑定服务器，支持指定名称、超时时间和麦块实例ID
+mc/解绑服务器 <id>                               # 解绑服务器
+mc/修改服务器 <id> [-n <name>] [-t <timeout>] [-i <instance>]    # 修改服务器信息，支持修改名称、超时时间和麦块实例ID
 mc/服务器列表                              # 查看已绑定的服务器列表
 mc/设置实例 <id> <instanceId>              # 设置服务器的麦块实例ID
-mc/绑定API密钥 <apiKey>                    # 绑定麦块API密钥
+mc/绑定密钥 <apiKey>                    # 绑定麦块API密钥
 ```
 
 ### 查询服务器状态
@@ -118,26 +118,26 @@ mc/资源 1      # 查看ID为1的麦块服务器资源使用情况
 ## 指令说明
 
 ### 绑定服务器
-- **命令**：`mc/绑定 <host> [-n <name>] [-t <timeout>] [-i <instance>]`
+- **命令**：`mc/绑定服务器 <host> [-n <name>] [-t <timeout>] [-i <instance>]`
 - **参数**：
   - `<host>`：服务器地址，支持带端口格式（如：`play.example.com:25565`）
   - `-n <name>`：服务器名称（可选，默认使用地址作为名称）
   - `-t <timeout>`：查询超时时间（可选，默认5秒）
   - `-i <instance>`：麦块实例ID（可选，用于电源控制）
 - **示例**：
-  - `mc/绑定 s3.ungc.com.cn` - 绑定默认端口的服务器
-  - `mc/绑定 s3.ungc.com.cn:37095 -n 测试服 -t 10` - 绑定指定端口、名称和超时的服务器
-  - `mc/绑定 s3.ungc.com.cn -i abc123` - 绑定服务器并设置麦块实例ID
+  - `mc/绑定服务器 s3.ungc.com.cn` - 绑定默认端口的服务器
+  - `mc/绑定服务器 s3.ungc.com.cn:37095 -n 测试服 -t 10` - 绑定指定端口、名称和超时的服务器
+  - `mc/绑定服务器 s3.ungc.com.cn -i abc123` - 绑定服务器并设置麦块实例ID
 
 ### 绑定API密钥
-- **命令**：`mc/绑定API密钥 <apiKey>`
+- **命令**：`mc/绑定密钥 <apiKey>`
 - **参数**：
   - `<apiKey>`：麦块联机平台的API密钥
 - **说明**：每个群组只需绑定一次，后续会自动使用该密钥
 
 ### 服务器管理指令
-- **`mc/解绑 <id>`**：解绑指定ID的服务器
-- **`mc/修改 <id> [-n <name>] [-t <timeout>] [-i <instance>]`**：修改服务器名称、超时时间或麦块实例ID
+- **`mc/解绑服务器 <id>`**：解绑指定ID的服务器
+- **`mc/修改服务器 <id> [-n <name>] [-t <timeout>] [-i <instance>`**：修改服务器名称、超时时间或麦块实例ID
 - **`mc/设置实例 <id> <instanceId>`**：为服务器设置麦块实例ID，用于电源控制
 - **`mc/服务器列表`**：查看当前群组已绑定的所有服务器
 
@@ -185,6 +185,9 @@ mc/资源 1      # 查看ID为1的麦块服务器资源使用情况
 ## 更新日志
 <details>
 <summary>点我查看更新日志详情</summary>
+
+### v2.0.7
+- 优化指令命名，将"绑定"改为"绑定服务器"，"解绑"改为"解绑服务器"，"修改"改为"修改服务器"
 
 ### v2.0.5
 - 调整权限检查配置项默认值：`enablePermissionCheck` 默认值改为 false，`allowMemberPowerCommands` 默认值改为 true
