@@ -660,7 +660,7 @@ export function apply(ctx: Context, config: Config) {
       let message = `📋 本群已绑定 ${servers.length} 台服务器：\n\n`
       servers.forEach(server => {
         // 兼容旧数据：null 也视为活跃
-        const activeStatus = server.active === false ? '� 不活跃' : '� 活跃'
+        const activeStatus = server.active === false ? '🔴 不活跃' : '🟢 活跃'
         message += `[ID:${server.id}] ${server.name} | ${activeStatus}\n`
         if (config.showIpInDetail) {
           message += `  地址: ${server.host}:${server.port}\n`
@@ -724,7 +724,7 @@ export function apply(ctx: Context, config: Config) {
 
       if (!status) {
         // 查询状态（兼容旧数据：null 也视为活跃）
-        const activeStatus = server.active === false ? '� 不活跃' : '� 活跃'
+        const activeStatus = server.active === false ? '🔴 不活跃' : '🟢 活跃'
         return `📋 ${server.name} (ID: ${id}) 状态：${activeStatus}`
       } else if (status === '启用') {
         // 设置为活跃
