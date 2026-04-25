@@ -17,6 +17,7 @@ export interface ServerConfig {
   serverType: 'java' | 'bedrock'
   timeout: number
   minekuaiInstanceId?: string
+  active: boolean
 }
 
 export interface ApiKeyConfig {
@@ -70,6 +71,7 @@ export function apply(ctx: Context, config: Config) {
     serverType: 'string',
     timeout: 'float',
     minekuaiInstanceId: 'string',
+    active: 'boolean',
   }, {
     autoInc: true,
     primary: 'id'
@@ -103,7 +105,7 @@ export function apply(ctx: Context, config: Config) {
   async function minekuaiApiRequest(instanceId: string, operation: string, groupId: string, maxRetries = 3) {
     const apiKeys = await ctx.database.get('minecraft_api_key', { groupId })
     if (!apiKeys || apiKeys.length === 0) {
-      throw new Error('本群未配置麦块API密钥，请先使用 绑定密钥 指令')
+      throw new Error('本群未配置麦块API密钥，请先使用 绑定API密钥 指令')
     }
     const apiKeyRecord = apiKeys[0]
 
@@ -264,14 +266,16 @@ export function apply(ctx: Context, config: Config) {
   ctx.guild()
     .command('mc/查服 [target:text]', '查询Minecraft服务器状态')
     .action(async ({ session }, target) => {
-      const servers = await ctx.database.get('minecraft_server', {})
+      const servers = await ctx.database.get('minecraft_server', {}) 
 
       if (target === undefined) {
-        if (servers.length === 0) {
-          return '❌ 本群未绑定任何服务器，请先使用 绑定 指令'
+        // 过滤出活跃的服务器（兼容旧数据：null 也视为活跃）
+        const activeServers = servers.filter(server => server.active !== false)
+        if (activeServers.length === 0) {
+          return '❌ 本群未绑定任何服务器，请先使用 绑定服务器 指令'
         }
 
-        const queries = servers.map(server => queryServerStatus(server))
+        const queries = activeServers.map(server => queryServerStatus(server))
         const results = await Promise.all(queries)
 
         const onlineCount = results.filter(r => r.success && r.data && r.data.online).length
@@ -287,7 +291,7 @@ export function apply(ctx: Context, config: Config) {
           }
         })
 
-        message += `\n💡 输入"查服+服务器ID"即可查询详细状态，例如：查服 ${servers[0]?.id || 1}`
+        message += `\n💡 输入"查服+服务器ID"即可查询详细状态，例如：查服 ${activeServers[0]?.id || 1}`
         message += `\n💡 也可以直接输入IP地址查询`
 
         return message
@@ -298,6 +302,10 @@ export function apply(ctx: Context, config: Config) {
       if (!isNaN(id)) {
         const server = servers.find(s => s.id === id)
         if (server) {
+          // 检查服务器是否活跃（兼容旧数据：null 也视为活跃）
+          if (server.active === false) {
+            return `❌ 服务器 ${server.name} (ID: ${id}) 处于不活跃状态，无法查询`
+          }
           const result = await queryServerStatus(server)
           if (!result.success) {
             return `🔴 ${getServerName(server)} - 离线 | 原因：${result.error}`
@@ -320,7 +328,8 @@ export function apply(ctx: Context, config: Config) {
         host: parsedHost,
         port: parsedPort,
         serverType: 'java',
-        timeout: 5.0
+        timeout: 5.0,
+        active: true,
       }
 
       const result = await queryServerStatus(tempServer)
@@ -369,7 +378,8 @@ export function apply(ctx: Context, config: Config) {
         port: parsedPort,
         serverType: 'java',
         timeout: options.timeout,
-        minekuaiInstanceId: options.instance
+        minekuaiInstanceId: options.instance,
+        active: true,
       }
       if (options.name) {
         createData.name = options.name
@@ -384,7 +394,7 @@ export function apply(ctx: Context, config: Config) {
     })
 
   ctx.guild()
-    .command('mc/绑定密钥 <apiKey:string>', '绑定麦块API密钥')
+    .command('mc/绑定API密钥 <apiKey:string>', '绑定麦块API密钥')
     .action(async ({ session }, apiKey) => {
       const permissionError = await checkPermission(session, config)
       if (permissionError) {
@@ -588,7 +598,7 @@ export function apply(ctx: Context, config: Config) {
       try {
         const apiKeys = await ctx.database.get('minecraft_api_key', { groupId })
         if (!apiKeys || apiKeys.length === 0) {
-          throw new Error('本群未配置麦块API密钥，请先使用 绑定密钥 指令')
+          throw new Error('本群未配置麦块API密钥，请先使用 绑定API密钥 指令')
         }
         const apiKeyRecord = apiKeys[0]
 
@@ -649,7 +659,9 @@ export function apply(ctx: Context, config: Config) {
 
       let message = `📋 本群已绑定 ${servers.length} 台服务器：\n\n`
       servers.forEach(server => {
-        message += `[ID:${server.id}] ${server.name}\n`
+        // 兼容旧数据：null 也视为活跃
+        const activeStatus = server.active === false ? '� 不活跃' : '� 活跃'
+        message += `[ID:${server.id}] ${server.name} | ${activeStatus}\n`
         if (config.showIpInDetail) {
           message += `  地址: ${server.host}:${server.port}\n`
         }
@@ -687,5 +699,43 @@ export function apply(ctx: Context, config: Config) {
       await ctx.database.set('minecraft_server', { id }, { minekuaiInstanceId: instanceId })
 
       return `✅ ${server.name} 的麦块实例ID已设置为: ${instanceId}`
+    })
+
+  ctx.guild()
+    .command('mc/服务器状态 <id:number> [status:text]', '查询或设置服务器活跃状态')
+    .action(async ({ session }, id, status) => {
+      const permissionError = await checkPermission(session, config)
+      if (permissionError) {
+        return permissionError
+      }
+
+      if (!id) {
+        return '请提供服务器ID，例如：服务器状态 1'
+      }
+
+      const groupId = session.guildId
+
+      const servers = await ctx.database.get('minecraft_server', { groupId })
+      const server = servers.find(s => s.id === id)
+
+      if (!server) {
+        return `❌ 未找到ID为 ${id} 的服务器`
+      }
+
+      if (!status) {
+        // 查询状态（兼容旧数据：null 也视为活跃）
+        const activeStatus = server.active === false ? '� 不活跃' : '� 活跃'
+        return `📋 ${server.name} (ID: ${id}) 状态：${activeStatus}`
+      } else if (status === '启用') {
+        // 设置为活跃
+        await ctx.database.set('minecraft_server', { id }, { active: true })
+        return `✅ ${server.name} (ID: ${id}) 已设置为活跃状态`
+      } else if (status === '停用') {
+        // 设置为不活跃
+        await ctx.database.set('minecraft_server', { id }, { active: false })
+        return `✅ ${server.name} (ID: ${id}) 已设置为不活跃状态`
+      } else {
+        return '请使用正确的状态值：启用 或 停用'
+      }
     })
 }
